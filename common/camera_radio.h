@@ -11,7 +11,7 @@ static inline uint32_t cam_cssid(void) {
 }
 /* All transmit calls are serialized in the application worker. */
 static inline bool cam_radio_send(struct edgez_umac *radio,const uint8_t local[6],
-                                  const uint8_t peer[6],uint16_t *sequence,
+                                  const uint8_t peer[6],bool station,uint16_t *sequence,
                                   const struct cam_packet *packet) {
     /* One radio worker owns these buffers; the SDK copies them before return. */
     static uint8_t payload[CAM_PACKET_MAX],wire[CAM_PACKET_MAX+EDGEZ_PAWR_HEADER_LENGTH];
@@ -20,8 +20,11 @@ static inline bool cam_radio_send(struct edgez_umac *radio,const uint8_t local[6
     if(!n || !edgez_pawr_encode_typed_request(wire,sizeof(wire),
         EDGEZ_PAWR_REQUEST_BULK_STREAM,packet->session,0,cam_cssid(),payload,n,&wn) ||
        !edgez_pawr_encode_action_frame(frame,sizeof(frame),(*sequence)++,local,peer,wire,wn,&fn)) return false;
+    /* Match the working AP/STA LED contract: wildcard BSSID on station
+     * discovery, AP BSSID on addressed station requests; AP uses its own MAC. */
+    if(station) memcpy(frame+16,peer,6);
     struct edgez_umac_tx_request tx={.token=*sequence,.frame=frame,.frame_length=fn,
-        .frame_type=EDGEZ_UMAC_TX_MANAGEMENT,.mcs=0,.attempts=1,.bandwidth_mhz=1,
+        .frame_type=EDGEZ_UMAC_TX_MANAGEMENT,.tid=8,.mcs=0,.attempts=1,.bandwidth_mhz=1,
         .no_ack=true,.immediate_status=true};
     return edgez_umac_transmit(radio,&tx)==EDGEZ_UMAC_OK;
 }

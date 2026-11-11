@@ -127,7 +127,7 @@ static void halow_start(void) {
 }
 static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t total,const uint8_t *dest) {
     const struct cam_packet p={.type=type,.session=id,.offset=offset,.total=total};
-    bool ok=cam_radio_send(&radio,info.mac_addr,dest,&sequence,&p);
+    bool ok=cam_radio_send(&radio,info.mac_addr,dest,false,&sequence,&p);
     if(ok) tx_ok++; else tx_bad++;
     return ok;
 }

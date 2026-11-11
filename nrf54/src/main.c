@@ -103,7 +103,7 @@ static bool configure_sleep(void) {
 static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t length,
                         const uint8_t *data,uint16_t size,const uint8_t *dest) {
     struct cam_packet p={.type=type,.session=id,.offset=offset,.total=length,.data=data,.size=size};
-    return cam_radio_send(&radio,info.mac_addr,dest,&sequence,&p);
+    return cam_radio_send(&radio,info.mac_addr,dest,true,&sequence,&p);
 }
 static void error(uint32_t id,uint32_t code,const uint8_t *dest) {
     (void)send_packet(CAM_ERROR,id,code,0,NULL,0,dest);
