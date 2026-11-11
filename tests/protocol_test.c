@@ -92,7 +92,7 @@ static void jpeg_dimensions(void) {
 }
 int main(void) {
     codec();bounds_and_bad_jpeg();capture_arguments();jpeg_dimensions();
-    const uint32_t sizes[]={4,767,768,769,1535,1536,1537,32768,65536,CAM_MAX_JPEG};
+    const uint32_t sizes[]={4,255,256,257,511,512,513,767,768,769,32768,65536,CAM_MAX_JPEG};
     for(unsigned i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++) transfer(sizes[i]);
-    puts("PASS: camera arguments/JPEG dimensions, CRC/codec corruption, truncation, bounds, stale/duplicate blocks, invalid JPEG, 10 image sizes through 512 KiB");
+    puts("PASS: camera arguments/JPEG dimensions, CRC/codec corruption, truncation, bounds, stale/duplicate blocks, invalid JPEG, 13 image sizes through 512 KiB");
 }

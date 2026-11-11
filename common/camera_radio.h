@@ -30,10 +30,20 @@ static inline bool cam_radio_send(struct edgez_umac *radio,const uint8_t local[6
 }
 static inline bool cam_radio_event(const struct edgez_umac_rx_frame *frame,
                                     const uint8_t local[6],struct cam_event *out) {
+    if(!frame || !frame->data || frame->length<=EDGEZ_PAWR_ACTION_HEADER_LENGTH ||
+       (frame->data[0]&0xfc)!=0xd0) return false;
+    size_t length=frame->length;
+    /* Some firmware RX paths retain FCS without setting its metadata flag.
+     * Remove it only when the full IEEE CRC validates, as in the LED audit. */
+    if(length>=EDGEZ_PAWR_ACTION_HEADER_LENGTH+4) {
+        const uint8_t *tail=frame->data+length-4;
+        uint32_t fcs=(uint32_t)tail[0] | (uint32_t)tail[1]<<8 | (uint32_t)tail[2]<<16 | (uint32_t)tail[3]<<24;
+        if(cam_crc32(frame->data,length-4)==fcs) length-=4;
+    }
     struct edgez_pawr_action_view action;
     struct edgez_pawr_request_view request;
     struct cam_packet packet;
-    if(!frame || !edgez_pawr_decode_action_frame(frame->data,frame->length,&action) ||
+    if(!frame || !edgez_pawr_decode_action_frame(frame->data,length,&action) ||
        (action.source[0]&1) || !memcmp(action.source,"\0\0\0\0\0\0",6) ||
        (memcmp(action.destination,local,6) && memcmp(action.destination,cam_broadcast,6)) ||
        !edgez_pawr_decode_request(action.payload,action.payload_length,&request) ||

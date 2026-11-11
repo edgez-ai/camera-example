@@ -124,7 +124,7 @@ with a checked internal-RAM fallback. Maximum image size is 512 KiB.
 The application uses EdgeZ vendor Public Action frames carrying the existing
 PAwR bulk-stream envelope. The example's own versioned camera payload has
 header and data CRC-32, request/session IDs, absolute offsets and lengths.
-It pulls 768-byte blocks using stop-and-wait retransmission. Duplicate capture
+It pulls 256-byte blocks using stop-and-wait retransmission. Duplicate capture
 requests replay the original result instead of taking another photograph;
 read retries address the same frozen frame. Stale sessions, wrong offsets,
 invalid sizes and corrupted blocks cannot advance the receiver. Capture arguments
@@ -163,7 +163,7 @@ pio run -e nrf54-camera
 The host test runs the **same C codec and image assembler used by the HC33**
 with address/undefined-behavior sanitizers. It checks every single-bit packet
 corruption, truncated messages, buffer limits, wrong sessions, out-of-order and
-duplicate delivery, JPEG markers and dimensions, capture arguments, and ten
+duplicate delivery, JPEG markers and dimensions, capture arguments, and thirteen
 transfer sizes up to 512 KiB.
 Both the physical USER and web Wake LED actions were manually verified on
 2026-11-11. Native DTIM10 setup and five-second LED on/off cycles were also
