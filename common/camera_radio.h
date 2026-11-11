@@ -13,8 +13,9 @@ static inline uint32_t cam_cssid(void) {
 static inline bool cam_radio_send(struct edgez_umac *radio,const uint8_t local[6],
                                   const uint8_t peer[6],uint16_t *sequence,
                                   const struct cam_packet *packet) {
-    uint8_t payload[CAM_PACKET_MAX],wire[CAM_PACKET_MAX+EDGEZ_PAWR_HEADER_LENGTH];
-    uint8_t frame[sizeof(wire)+EDGEZ_PAWR_ACTION_HEADER_LENGTH];
+    /* One radio worker owns these buffers; the SDK copies them before return. */
+    static uint8_t payload[CAM_PACKET_MAX],wire[CAM_PACKET_MAX+EDGEZ_PAWR_HEADER_LENGTH];
+    static uint8_t frame[sizeof(wire)+EDGEZ_PAWR_ACTION_HEADER_LENGTH];
     size_t n=cam_encode(payload,sizeof(payload),packet),wn,fn;
     if(!n || !edgez_pawr_encode_typed_request(wire,sizeof(wire),
         EDGEZ_PAWR_REQUEST_BULK_STREAM,packet->session,0,cam_cssid(),payload,n,&wn) ||

@@ -25,7 +25,8 @@ pio run -e nrf54-camera
 
 Run the two platform builds sequentially: the installed PlatformIO platforms
 share CMake/Ninja tool packages. The nRF prebuild hook applies the same
-Zephyr/PlatformIO and optional SPI sleep integration as the LED example.
+Zephyr/PlatformIO integration as the LED example. SPI sleep support is already
+included in the pinned public SDK; builds leave its tracked sources untouched.
 
 ```sh
 pio run -e hc33 -t upload --upload-port /dev/cu.SLAB_USBtoUART

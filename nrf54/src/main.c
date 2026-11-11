@@ -17,6 +17,7 @@ K_MSGQ_DEFINE(rx_queue,sizeof(struct cam_event),12,4);
 static struct edgez_umac radio;
 static struct edgez_umac_radio_info info;
 static uint16_t sequence;
+static atomic_t rx_total,rx_valid;
 static uint8_t peer[6];
 static bool paired,ps_ready,image_open;
 static uint32_t session,total,boot_nonce,last_error;
@@ -28,7 +29,8 @@ static const struct gpio_dt_spec led=GPIO_DT_SPEC_GET(DT_ALIAS(led0),gpios);
 static void receive(void *ctx,const struct edgez_umac_rx_frame *frame) {
     ARG_UNUSED(ctx);
     struct cam_event event;
-    if(cam_radio_event(frame,info.mac_addr,&event)) (void)k_msgq_put(&rx_queue,&event,K_NO_WAIT);
+    atomic_inc(&rx_total);
+    if(cam_radio_event(frame,info.mac_addr,&event)) { atomic_inc(&rx_valid);(void)k_msgq_put(&rx_queue,&event,K_NO_WAIT); }
 }
 static void radio_fault(void *ctx) {
     ARG_UNUSED(ctx);
@@ -177,7 +179,7 @@ int main(void) {
     ops=*edgez_rf_driver_ops(); ops.add_mesh_interface=add_station;
     const struct edgez_umac_config config={.country_code=CAM_COUNTRY,
         .channel={.operating_frequency_hz=CAM_FREQUENCY_HZ,.operating_bw_mhz=1,.primary_bw_mhz=1},
-        .beacon_interval_tu=100,.dtim_period=1,.compressed_ssid=0,
+        .beacon_interval_tu=100,.dtim_period=1,.compressed_ssid=cam_cssid(),
         .rate_control={.initial_mcs=0,.maximum_mcs=0},.enable_beaconing=false};
     if(edgez_umac_bind(&radio,&ops,NULL) || edgez_umac_set_event_ops(&radio,&events,NULL) ||
        edgez_rf_bind_umac(&radio) || edgez_umac_start(&radio,&config,&info)) {
@@ -187,8 +189,11 @@ int main(void) {
     struct cam_event event;
     struct cam_packet p;
     LOG_INF("Camera node ready; discovering HC33 on 914.5 MHz/1 MHz");
+    unsigned hello_count=0;
     while(!paired) {
-        (void)send_packet(CAM_HELLO,boot_nonce,0,CAM_MAX_JPEG,NULL,0,cam_broadcast);
+        bool ok=send_packet(CAM_HELLO,boot_nonce,0,CAM_MAX_JPEG,NULL,0,cam_broadcast);
+        if(!(hello_count++%10)) LOG_INF("HELLO sent=%u rx=%ld valid=%ld mac=%02x:%02x:%02x:%02x:%02x:%02x",ok,
+            (long)atomic_get(&rx_total),(long)atomic_get(&rx_valid),info.mac_addr[0],info.mac_addr[1],info.mac_addr[2],info.mac_addr[3],info.mac_addr[4],info.mac_addr[5]);
         int64_t end=k_uptime_get()+1000;
         while(k_uptime_get()<end && !k_msgq_get(&rx_queue,&event,K_MSEC(100))) {
             if(cam_decode(event.bytes,event.length,&p) && p.type==CAM_HELLO_ACK && p.session==boot_nonce) {

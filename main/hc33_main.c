@@ -36,7 +36,8 @@ static SemaphoreHandle_t lock;
 static atomic_bool pending,dtim_pulse,capture_requested;
 static bool requested_photo;
 static struct cam_image assembly;
-static atomic_uint dropped_rx;
+static atomic_uint dropped_rx,rx_total,rx_valid;
+static unsigned tx_ok,tx_bad;
 enum phase { IDLE,QUEUED,DISCOVERING,CAPTURING,RECEIVING,FINISHING,COMPLETE,WAKING,LED_COMPLETE,FAILED };
 static const char *const phases[]={"idle","queued","discovering","capturing","receiving","finishing","complete","waking","led-complete","error"};
 static struct {
@@ -79,8 +80,11 @@ struct mmpkt *__wrap_mmdrv_host_get_beacon(void) {
 }
 static void receive(void *ctx,const struct edgez_umac_rx_frame *frame) {
     (void)ctx; struct cam_event event;
-    if(cam_radio_event(frame,info.mac_addr,&event) && xQueueSend(rx_queue,&event,0)!=pdPASS)
-        atomic_fetch_add(&dropped_rx,1);
+    atomic_fetch_add(&rx_total,1);
+    if(cam_radio_event(frame,info.mac_addr,&event)) {
+        atomic_fetch_add(&rx_valid,1);
+        if(xQueueSend(rx_queue,&event,0)!=pdPASS) atomic_fetch_add(&dropped_rx,1);
+    }
 }
 static void radio_fault(void *ctx) { (void)ctx; ESP_LOGE(TAG,"Radio restart requested; reboot HC33 to recover"); }
 static const struct edgez_umac_event_ops events={.rx_frame=receive,.hardware_restart_required=radio_fault};
@@ -119,11 +123,13 @@ static void halow_start(void) {
     ESP_ERROR_CHECK(radio.driver->configure_bss(radio.driver_ctx,radio.vif_id,100,CAM_DTIM_PERIOD,cam_cssid())==0?ESP_OK:ESP_FAIL);
     const struct edgez_rf_beacon_template beacon={.frame=frame,.frame_length=n,.mcs=0,.bandwidth_mhz=1};
     ESP_ERROR_CHECK(edgez_umac_enable_beaconing(&radio,&beacon)==0?ESP_OK:ESP_FAIL);
-    ESP_LOGI(TAG,"HaLow DTIM10 AP ready on US 914.5 MHz/1 MHz");
+    ESP_LOGI(TAG,"HaLow DTIM10 AP ready on US 914.5 MHz/1 MHz mac=%02x:%02x:%02x:%02x:%02x:%02x",info.mac_addr[0],info.mac_addr[1],info.mac_addr[2],info.mac_addr[3],info.mac_addr[4],info.mac_addr[5]);
 }
 static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t total,const uint8_t *dest) {
     const struct cam_packet p={.type=type,.session=id,.offset=offset,.total=total};
-    return cam_radio_send(&radio,info.mac_addr,dest,&sequence,&p);
+    bool ok=cam_radio_send(&radio,info.mac_addr,dest,&sequence,&p);
+    if(ok) tx_ok++; else tx_bad++;
+    return ok;
 }
 static void phase(enum phase phase) {
     take();state.phase=phase;give();
@@ -205,6 +211,8 @@ static void worker(void *arg) {
             if(command=='c') (void)start_action(true);
             if(command=='s') ESP_LOGI(TAG,"STATUS state=%s peer=%u id=%"PRIu32" received=%"PRIu32" total=%"PRIu32" retries=%"PRIu32,
                 phases[state.phase],peer_known,state.id,state.received,state.total,state.retries);
+            if(command=='s') ESP_LOGI(TAG,"RADIO rx=%u valid=%u tx_ok=%u tx_bad=%u stack_free=%u",
+                atomic_load(&rx_total),atomic_load(&rx_valid),tx_ok,tx_bad,uxTaskGetStackHighWaterMark(NULL));
         }
         int button=gpio_get_level(GPIO_NUM_0);
         if(previous_button && !button && now-button_at>300000) { (void)start_action(false);button_at=now; }
@@ -304,6 +312,6 @@ void app_main(void) {
     const gpio_config_t button={.pin_bit_mask=1ULL<<0,.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};
     ESP_ERROR_CHECK(gpio_config(&button));
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0,256,0,0,NULL,0));
-    if(xTaskCreate(worker,"camera_radio",8192,NULL,5,NULL)!=pdPASS) abort();
+    if(xTaskCreate(worker,"camera_radio",16384,NULL,5,NULL)!=pdPASS) abort();
     wifi_web_start();
 }
