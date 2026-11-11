@@ -185,6 +185,10 @@ int main(void) {
        edgez_rf_bind_umac(&radio) || edgez_umac_start(&radio,&config,&info)) {
         LOG_ERR("HaLow start failed driver=%d",radio.last_driver_status); return -EIO;
     }
+    if(mmdrv_set_wake_enabled(true)!=MMWLAN_SUCCESS) { LOG_ERR("Initial host wake failed"); return -EIO; }
+    struct morse_cmd_req_config_ps awake=MORSE_COMMAND_INIT(awake,MORSE_CMD_ID_CONFIG_PS,radio.vif_id,
+        .enabled=false,.dynamic_ps_offload=false);
+    if(!checked(&awake,MORSE_CMD_ID_CONFIG_PS,radio.vif_id)) return -EIO;
     boot_nonce=sys_rand32_get()|1U;
     struct cam_event event;
     struct cam_packet p;
