@@ -5,4 +5,4 @@
 [submodule "platforms/mm-iot-zephyr"]
     path = platforms/mm-iot-zephyr
     url = https://github.com/edgez-ai/mm-iot-zephyr.git
-    branch = edgez
+    branch = camera-example

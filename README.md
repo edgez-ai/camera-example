@@ -14,7 +14,9 @@ triggers the LED, `c` triggers a photo, and `s` prints current progress.
 
 Install PlatformIO Core, Git, and the platform's required build tools. Clone
 with submodules; the example uses only public SDK checkouts and protected
-prebuilt mesh archives. No private mesh source checkout is required.
+prebuilt mesh archives. Both platforms pin the same `mm-iot-sdk` source
+commit, `ad3551b58dbaaa969e5f32dda3ca6a3ca45372c4`. No private mesh source
+checkout is required.
 
 ```sh
 git clone --recurse-submodules https://github.com/edgez-ai/camera-example.git
