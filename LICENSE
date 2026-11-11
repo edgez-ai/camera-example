@@ -1,0 +1,99 @@
+EdgeZ Non-Commercial and Commercial Software License, Version 1.0
+
+Copyright (c) 2026 EdgeZeron AI AB. All rights reserved.
+
+1. Scope
+
+This license applies to software and other material identified as owned by
+EdgeZeron AI AB (the "Software"). Third-party material included with the
+Software remains governed by its own license terms and notices. Those terms
+take precedence for the applicable third-party material.
+
+2. Non-Commercial License Grant
+
+Subject to this license, EdgeZeron AI AB grants you a worldwide, royalty-free,
+non-exclusive, non-transferable license to use, copy, compile, and modify the
+Software solely for Non-Commercial Purposes or Internal Evaluation. You may
+also distribute the Software as expressly permitted below for Non-Commercial
+Purposes.
+
+"Non-Commercial Purposes" means personal use, education, academic research,
+non-profit research, evaluation, testing, or development that is not primarily
+intended for or directed toward commercial advantage or monetary compensation.
+
+"Internal Evaluation" means internal testing, benchmarking, prototyping, or
+proof-of-concept work performed solely to assess the Software or decide whether
+to obtain a commercial license. Internal Evaluation is permitted within a
+for-profit organization, but does not include production use, operational use,
+customer-facing use, paid services, or use that directly generates revenue.
+
+You may distribute the Software or your modifications for Non-Commercial
+Purposes only if you:
+
+  a. provide recipients with a complete copy of this license;
+  b. retain all copyright, attribution, and license notices;
+  c. clearly identify files you modified; and
+  d. license the EdgeZ-owned portions of the distributed work under this same
+     license, without imposing additional restrictions on the rights granted
+     here.
+
+3. Commercial Use
+
+Any Commercial Use requires a separate written commercial license from
+EdgeZeron AI AB. "Commercial Use" includes use of the Software or a derivative
+work:
+
+  a. in or to develop, test, support, operate, or provide a product or service
+     intended for commercial advantage or monetary compensation;
+  b. in the internal operations of a for-profit organization, except for
+     Internal Evaluation as expressly permitted by Section 2;
+  c. as part of paid consulting, contracting, hosting, or managed services; or
+  d. in a product or service offered for sale, license, subscription, rent, or
+     other consideration.
+
+For commercial licensing, contact EdgeZeron AI AB.
+
+4. Restrictions
+
+Except for the permissions expressly granted above, you may not sublicense,
+sell, rent, lease, or otherwise commercially exploit the Software. You may not
+remove or obscure any copyright, attribution, license, or proprietary notice.
+This license does not grant permission to use the trade names, trademarks,
+service marks, or product names of EdgeZeron AI AB except as reasonably
+necessary to describe the origin of the Software.
+
+5. Contributions
+
+Unless governed by a separate written contribution agreement, any contribution
+intentionally submitted to EdgeZeron AI AB for inclusion in the Software is
+licensed to EdgeZeron AI AB under terms that permit EdgeZeron AI AB to use,
+modify, sublicense, and distribute that contribution as part of the Software,
+including under commercial terms.
+
+6. Termination
+
+Your rights under this license terminate automatically if you fail to comply
+with its terms. If the breach is curable, your rights are reinstated
+automatically when you cure the breach within 30 days after becoming aware of
+it. Sections that by their nature should survive termination will survive.
+
+7. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. YOU BEAR ALL RISK AS TO
+THE QUALITY AND PERFORMANCE OF THE SOFTWARE.
+
+8. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, EDGEZERON AI AB AND ITS CONTRIBUTORS
+WILL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES ARISING FROM OR RELATED TO THE SOFTWARE OR THIS LICENSE,
+HOWEVER CAUSED AND UNDER ANY THEORY OF LIABILITY, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES.
+
+9. No Implied Rights
+
+No rights are granted except as expressly stated in this license. Commercial
+rights remain available only under a separate written agreement with
+EdgeZeron AI AB.

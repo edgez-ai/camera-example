@@ -1,0 +1,21 @@
+config MBEDTLS_ZEPHYR_ENTROPY
+    bool
+source "Kconfig.zephyr"
+config WIFI_SSID
+    string "HaLow identity (unused by the camera protocol)"
+    default "edgez-camera"
+config WIFI_PSK
+    string "HaLow PSK (unused by the camera protocol)"
+    default ""
+config CAMERA_UART_BAUD
+    int "Camera UART baud rate"
+    default 921600
+config CAMERA_DTIM_SLEEP
+    bool "Use the LED example's native AP/STA DTIM sleep contract"
+    default y
+config OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL
+    bool
+    default y
+config OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS
+    bool
+    default y

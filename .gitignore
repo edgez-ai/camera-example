@@ -1,0 +1,9 @@
+/.pio/
+/managed_components/
+/build/
+/sdkconfig
+/sdkconfig.old
+/sdkconfig.hc33
+/sdkconfig.hc33.old
+__pycache__/
+*.pyc

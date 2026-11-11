@@ -1,0 +1,8 @@
+menu "Camera example"
+config CAMERA_AP_SSID
+    string "2.4 GHz access point SSID"
+    default "EdgeZ-Camera"
+config CAMERA_AP_PASSWORD
+    string "2.4 GHz access point password (8-63 characters)"
+    default "edgez-camera"
+endmenu

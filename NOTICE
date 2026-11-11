@@ -1,0 +1,13 @@
+Camera example by EdgeZeron AI AB, 2026.
+
+The board overlays, PlatformIO integration, SPI sleep patch, OpenOCD uploader,
+and ESP32-S3 GPIO reset fix are adapted from edgez-ai/template-offgrid-tracker
+(commit 5f682b5). The VC0706 UART command sequence and swapped pin mapping are
+adapted from its camera diagnostic (commit 39820d3). Those files were modified
+for this standalone camera application. EdgeZ-owned application code is
+licensed under the included LICENSE.
+
+Public dependencies are pinned Git submodules. Their original license files,
+third-party notices and firmware licensing terms remain in the respective
+repositories. Protected EdgeZ mesh archives are consumed via those SDKs;
+private implementation sources are not copied into this example.

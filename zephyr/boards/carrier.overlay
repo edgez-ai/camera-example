@@ -1,0 +1,44 @@
+#include "edgez_nrf54l15_fgh200m_companion.overlay"
+
+/* Radio power test: remove the XIAO IMU's always-on supply and all bus
+ * initialization. Disabled nodes leave INT/SCL/SDA disconnected with no
+ * pull-ups, avoiding back-power into the unpowered sensor. */
+/delete-node/ &imu_power_default_on;
+
+&pdm_imu_pwr { status = "disabled"; };
+&i2c30 { status = "disabled"; };
+&lsm6ds3tr_c { status = "disabled"; };
+
+&gpio0 {
+	fgh200m_imu_off: fgh200m_imu_off {
+		gpio-hog;
+		gpios = <1 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "fgh200m-imu-power-off";
+	};
+};
+
+/* The L76K remains available for profiles using Live location. Application
+ * device-PM and its wake GPIO keep it off for Off/Map profiles and sleep. */
+
+/* Battery measurement is omitted from this power profile.  Disabling the DT
+ * device as well as CONFIG_ADC prevents the SAADC from being initialized and
+ * leaves its analog input disconnected while the MCU sleeps. */
+&adc {
+	status = "disabled";
+};
+
+&vbatt {
+	status = "disabled";
+};
+
+&gpio1 {
+	/* The XIAO base-board regulator node is disabled by the FGH200M overlay.
+	 * Keep its otherwise-unclaimed VBAT divider enable in a defined off state. */
+	xiao_vbat_off: xiao_vbat_off {
+		gpio-hog;
+		gpios = <15 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "xiao-vbat-divider-off";
+	};
+};
