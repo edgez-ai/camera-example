@@ -13,7 +13,7 @@
 #define CAM_HEADER_SIZE 28U
 #define CAM_PACKET_MAX (CAM_HEADER_SIZE + CAM_BLOCK_SIZE)
 enum cam_type { CAM_HELLO=1, CAM_HELLO_ACK, CAM_CAPTURE, CAM_CAPTURED,
-                CAM_READ, CAM_DATA, CAM_FINISH, CAM_FINISHED, CAM_ERROR, CAM_LED, CAM_LED_ACK };
+                CAM_READ, CAM_DATA, CAM_FINISH, CAM_FINISHED, CAM_ERROR, CAM_LED, CAM_LED_ACK, CAM_VERSION, CAM_VERSION_ACK };
 enum cam_error { CAM_ERR_CAMERA=1, CAM_ERR_BUSY, CAM_ERR_SESSION,
                  CAM_ERR_RANGE, CAM_ERR_TIMEOUT, CAM_ERR_RADIO };
 struct cam_packet {
@@ -42,3 +42,9 @@ enum cam_image_result { CAM_IMAGE_IGNORED=0,CAM_IMAGE_PROGRESS=1,
 bool cam_image_start(struct cam_image *image,uint8_t *bytes,uint32_t capacity,
                      uint32_t session,uint32_t total);
 enum cam_image_result cam_image_accept(struct cam_image *image,const struct cam_packet *packet);
+
+#define CAM_VERSION_MAX 64U
+struct cam_resolution { uint16_t width,height;uint8_t field,code; };
+const struct cam_resolution *cam_resolution_find(uint16_t width,uint16_t height);
+bool cam_capture_dimensions(const struct cam_packet *packet,uint16_t *width,uint16_t *height);
+bool cam_jpeg_dimensions(const uint8_t *jpeg,size_t length,uint16_t *width,uint16_t *height);

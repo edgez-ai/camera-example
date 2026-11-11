@@ -20,6 +20,8 @@ static const struct gpio_dt_spec power=GPIO_DT_SPEC_GET(DT_PATH(zephyr_user),cam
 static uint8_t ring[2048];
 static volatile unsigned head,tail,overruns;
 static bool running;
+static uint8_t cached_version[CAM_VERSION_MAX];
+static uint16_t cached_version_length;
 static volatile bool rx_enabled;
 static volatile int rx_error;
 static uint8_t dma[2][512] __aligned(4);
@@ -86,6 +88,11 @@ static int command(const uint8_t *bytes,size_t n,uint8_t op,int timeout) {
     int rc=exact(reply,sizeof(reply),timeout);
     if(rc) return rc;
     const uint8_t expected[]={0x76,0,op,0,0};
+    bool clone_resolution_ack=op==0x31 && reply[0]==0x76 && !reply[1] &&
+        reply[2]==op && reply[3]==1 && !reply[4];
+    if(clone_resolution_ack) {
+        LOG_WRN("Resolution ACK status=1; receiver must verify JPEG dimensions");return 0;
+    }
     if(memcmp(reply,expected,sizeof(reply))) {
         LOG_ERR("Command 0x%02x unexpected ACK %02x %02x %02x %02x %02x",op,reply[0],reply[1],reply[2],reply[3],reply[4]);
         return -EBADMSG;
@@ -116,8 +123,9 @@ void vc0706_off(void) {
     }
     if(gpio_is_ready_dt(&power)) (void)gpio_pin_configure_dt(&power,GPIO_OUTPUT_INACTIVE);
 }
-int vc0706_capture(uint32_t *length) {
-    if(!length || !device_is_ready(uart) || !gpio_is_ready_dt(&power)) return -ENODEV;
+static int prepare_camera(void) {
+    if(!device_is_ready(uart) || !gpio_is_ready_dt(&power)) return -ENODEV;
+    cached_version_length=0;
     int rc=gpio_pin_configure_dt(&power,GPIO_OUTPUT_ACTIVE);
     if(rc) return rc;
     const char *stage="uart-resume";
@@ -157,15 +165,32 @@ int vc0706_capture(uint32_t *length) {
     if(!rc) {
         if(!version_length || version_length>sizeof(version)) { rc=-EBADMSG;goto fail; }
         rc=exact(version,version_length,2000);if(rc) goto fail;
+        memcpy(cached_version,version,version_length);cached_version_length=version_length;
         LOG_INF("Camera version received bytes=%u",version_length);
     } else if(rc!=-ETIMEDOUT) goto fail;
     drain();
     LOG_INF("Camera version prefix acknowledged");
-    stage="release-frame";
+    return 0;
+fail:
+    LOG_ERR("Camera stage=%s error=%d rx_bytes=%u overruns=%u rx_error=%d",stage,rc,rx_bytes,overruns,rx_error);
+    vc0706_off();return rc;
+}
+int vc0706_version(uint8_t *version,size_t capacity,uint16_t *length) {
+    if(!version || !length || capacity<CAM_VERSION_MAX) return -EINVAL;
+    int rc=prepare_camera();
+    if(!rc) { memcpy(version,cached_version,cached_version_length);*length=cached_version_length; }
+    vc0706_off();return rc;
+}
+int vc0706_capture(uint16_t width,uint16_t height,uint32_t *length) {
+    const struct cam_resolution *mode=cam_resolution_find(width,height);
+    if(!mode || !length) return -EINVAL;
+    int rc=prepare_camera();if(rc) return rc;
+    const char *stage="release-frame";
     const uint8_t release[]={0x56,0,0x36,1,3};
     rc=command(release,sizeof(release),0x36,2000);if(rc) goto fail;
     /* Existing board example's verified 640x480 register write. */
-    const uint8_t resolution[]={0x56,0,0x31,5,4,1,0,0x19,0};
+    uint8_t resolution[]={0x56,0,0x31,5,mode->field,1,0,0x19,mode->code};
+    LOG_INF("Setting camera resolution %ux%u",width,height);
     stage="resolution";
     rc=command(resolution,sizeof(resolution),0x31,2000); if(rc) goto fail;
     k_msleep(250);stage="capture-ack";

@@ -1,6 +1,6 @@
 idf_component_register(SRCS "hc33_main.c" "../common/camera_protocol.c"
     INCLUDE_DIRS "../common"
-    PRIV_REQUIRES halow esp_wifi esp_event esp_netif nvs_flash esp_http_server
+    PRIV_REQUIRES halow esp_wifi esp_event esp_netif nvs_flash esp_http_server json
                   esp_driver_gpio esp_timer)
 get_target_property(shims_sources shims SOURCES)
 list(FILTER shims_sources EXCLUDE REGEX "mmhal_os\\.c$")

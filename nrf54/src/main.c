@@ -22,7 +22,10 @@ static uint8_t peer[6];
 static bool paired,ps_ready,image_open;
 static uint32_t session,total,boot_nonce,last_error;
 static int64_t last_activity,led_until;
-static uint32_t led_session;
+static uint32_t led_session,version_session;
+static uint8_t version_data[CAM_VERSION_MAX];
+static uint16_t version_length;
+static int version_result;
 static uint8_t block[CAM_BLOCK_SIZE];
 static const struct gpio_dt_spec radio_power=GPIO_DT_SPEC_GET(DT_PATH(zephyr_user),halow_power_en_gpios);
 static const struct gpio_dt_spec led=GPIO_DT_SPEC_GET(DT_ALIAS(led0),gpios);
@@ -135,6 +138,16 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(ps_ready) (void)mmdrv_set_wake_enabled(false);
         return;
     }
+    if(p->type==CAM_VERSION && p->session) {
+        if(image_open) { error(p->session,CAM_ERR_BUSY,peer);return; }
+        if(version_session!=p->session) {
+            version_session=p->session;
+            version_result=vc0706_version(version_data,sizeof(version_data),&version_length);
+        }
+        if(version_result) error(p->session,CAM_ERR_CAMERA,peer);
+        else (void)send_packet(CAM_VERSION_ACK,p->session,0,0,version_data,version_length,peer);
+        k_msleep(30);sleep_idle();return;
+    }
     if(p->type==CAM_CAPTURE && p->session) {
         led_until=0;
         if(p->session==session) {
@@ -145,9 +158,13 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
             return;
         }
         if(image_open) { error(p->session,CAM_ERR_BUSY,peer); return; }
+        uint16_t width,height;
+        if(!cam_capture_dimensions(p,&width,&height)) {
+            error(p->session,CAM_ERR_RANGE,peer);k_msleep(30);sleep_idle();return;
+        }
         session=p->session; last_error=0; total=0;
         gpio_pin_set_dt(&led,1);
-        int rc=vc0706_capture(&total);
+        int rc=vc0706_capture(width,height,&total);
         if(rc) {
             LOG_ERR("Camera capture failed: %d",rc);
             last_error=CAM_ERR_CAMERA; error(session,last_error,peer); sleep_idle();

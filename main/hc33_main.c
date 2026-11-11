@@ -1,6 +1,7 @@
 /* Copyright 2026 EdgeZeron AI AB. See LICENSE. */
 #include "camera_radio.h"
 #include "web_page.h"
+#include "cJSON.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,18 +35,23 @@ static bool peer_known;
 static QueueHandle_t rx_queue;
 static SemaphoreHandle_t lock;
 static atomic_bool pending,dtim_pulse,capture_requested;
-static bool requested_photo;
+enum action { ACTION_LED,ACTION_CAPTURE,ACTION_VERSION };
+static enum action requested_action;
+static uint16_t requested_width,requested_height;
 static struct cam_image assembly;
 static atomic_uint dropped_rx,rx_total,rx_valid;
 static unsigned tx_ok,tx_bad;
-enum phase { IDLE,QUEUED,DISCOVERING,CAPTURING,RECEIVING,FINISHING,COMPLETE,WAKING,LED_COMPLETE,FAILED };
-static const char *const phases[]={"idle","queued","discovering","capturing","receiving","finishing","complete","waking","led-complete","error"};
+enum phase { IDLE,QUEUED,DISCOVERING,CAPTURING,RECEIVING,FINISHING,COMPLETE,WAKING,LED_COMPLETE,VERSION_READING,VERSION_COMPLETE,FAILED };
+static const char *const phases[]={"idle","queued","discovering","capturing","receiving","finishing","complete","waking","led-complete","reading-version","version-complete","error"};
 static struct {
     enum phase phase;
     uint32_t id,total,received,retries;
     uint8_t *image;
     unsigned readers;
-    bool busy,peer,photo;
+    bool busy,peer;
+    enum action action;
+    uint16_t width,height;
+    char version[CAM_VERSION_MAX+1],version_hex[CAM_VERSION_MAX*2+1];
     char error[96];
 } state;
 static int64_t started,stage_started,last_send,burst_until;
@@ -126,7 +132,9 @@ static void halow_start(void) {
     ESP_LOGI(TAG,"HaLow DTIM10 AP ready on US 914.5 MHz/1 MHz mac=%02x:%02x:%02x:%02x:%02x:%02x",info.mac_addr[0],info.mac_addr[1],info.mac_addr[2],info.mac_addr[3],info.mac_addr[4],info.mac_addr[5]);
 }
 static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t total,const uint8_t *dest) {
-    const struct cam_packet p={.type=type,.session=id,.offset=offset,.total=total};
+    uint8_t args[4]={state.width,state.width>>8,state.height,state.height>>8};
+    const struct cam_packet p={.type=type,.session=id,.offset=offset,.total=total,
+        .data=type==CAM_CAPTURE?args:NULL,.size=type==CAM_CAPTURE?sizeof(args):0};
     bool ok=cam_radio_send(&radio,info.mac_addr,dest,false,&sequence,&p);
     if(ok) tx_ok++; else tx_bad++;
     return ok;
@@ -140,10 +148,10 @@ static void fail(const char *message) {
     take();snprintf(state.error,sizeof(state.error),"%s",message);state.phase=FAILED;state.busy=false;give();
     atomic_store(&pending,false);ESP_LOGE(TAG,"Remote action failed: %s",message);
 }
-static bool start_action(bool photo) {
+static bool start_action(enum action action,uint16_t width,uint16_t height) {
     take();
     if(state.busy || state.readers || atomic_load(&capture_requested)) { give();return false; }
-    requested_photo=photo;
+    requested_action=action;requested_width=width;requested_height=height;
     atomic_store(&capture_requested,true);
     give();return true;
 }
@@ -154,8 +162,12 @@ static void begin_capture(void) {
     free(state.image);state.image=NULL;
     state.id++;if(!state.id)state.id=1;
     state.total=state.received=state.retries=0;state.error[0]=0;
-    state.busy=true;state.phase=QUEUED;state.photo=requested_photo;
+    state.busy=true;state.phase=QUEUED;state.action=requested_action;
+    state.width=requested_width;state.height=requested_height;
     give();
+}
+static enum phase action_phase(void) {
+    return state.action==ACTION_CAPTURE?CAPTURING:state.action==ACTION_VERSION?VERSION_READING:WAKING;
 }
 static void handle(const struct cam_event *event,const struct cam_packet *p) {
     if(p->type==CAM_HELLO || p->type==CAM_HELLO_ACK) {
@@ -164,10 +176,22 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(p->type==CAM_HELLO_ACK && (!state.busy || state.phase!=DISCOVERING || p->session!=state.id)) return;
         memcpy(peer,event->source,6);peer_known=true;
         take();state.peer=true;give();
-        if(state.busy && state.phase==DISCOVERING) phase(state.photo?CAPTURING:WAKING);
+        if(state.busy && state.phase==DISCOVERING) phase(action_phase());
         return;
     }
     if(!state.busy || !peer_known || memcmp(peer,event->source,6) || p->session!=state.id) return;
+    if(state.phase==VERSION_READING && p->type==CAM_VERSION_ACK && p->size<=CAM_VERSION_MAX) {
+        static const char hex[]="0123456789abcdef";
+        take();
+        for(unsigned i=0;i<p->size;i++) {
+            state.version[i]=p->data[i]>=32 && p->data[i]<=126?p->data[i]:'.';
+            state.version_hex[2*i]=hex[p->data[i]>>4];state.version_hex[2*i+1]=hex[p->data[i]&15];
+        }
+        state.version[p->size]=0;state.version_hex[p->size*2]=0;
+        if(!p->size) snprintf(state.version,sizeof(state.version),"VC0706 protocol; version body unavailable");
+        state.phase=VERSION_COMPLETE;state.busy=false;give();atomic_store(&pending,false);
+        ESP_LOGI(TAG,"Camera version id=%"PRIu32" text=%s hex=%s",state.id,state.version,state.version_hex);return;
+    }
     if(state.phase==WAKING && p->type==CAM_LED_ACK) {
         take();state.phase=LED_COMPLETE;state.busy=false;give();atomic_store(&pending,false);
         ESP_LOGI(TAG,"LED acknowledged id=%"PRIu32" on_ms=%"PRIu32" camera_requested=0",state.id,p->total);
@@ -194,6 +218,12 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         take();state.received=assembly.received;give();
         attempts=0;last_send=0;stage_started=esp_timer_get_time();
         if(result==CAM_IMAGE_COMPLETE) {
+            uint16_t actual_width,actual_height;
+            if(!cam_jpeg_dimensions(state.image,state.total,&actual_width,&actual_height) ||
+               actual_width!=state.width || actual_height!=state.height) {
+                fail("Camera JPEG dimensions do not match the requested resolution.");return;
+            }
+            ESP_LOGI(TAG,"JPEG resolution verified %ux%u",actual_width,actual_height);
             phase(FINISHING);
         }
     } else if(state.phase==FINISHING && p->type==CAM_FINISHED) {
@@ -207,15 +237,16 @@ static void worker(void *arg) {
         int64_t now=esp_timer_get_time();
         uint8_t command;
         if(uart_read_bytes(UART_NUM_0,&command,1,0)==1) {
-            if(command=='w') (void)start_action(false);
-            if(command=='c') (void)start_action(true);
+            if(command=='w') (void)start_action(ACTION_LED,0,0);
+            if(command=='c') (void)start_action(ACTION_CAPTURE,640,480);
+            if(command=='v') (void)start_action(ACTION_VERSION,0,0);
             if(command=='s') ESP_LOGI(TAG,"STATUS state=%s peer=%u id=%"PRIu32" received=%"PRIu32" total=%"PRIu32" retries=%"PRIu32,
                 phases[state.phase],peer_known,state.id,state.received,state.total,state.retries);
             if(command=='s') ESP_LOGI(TAG,"RADIO rx=%u valid=%u tx_ok=%u tx_bad=%u stack_free=%u",
                 atomic_load(&rx_total),atomic_load(&rx_valid),tx_ok,tx_bad,uxTaskGetStackHighWaterMark(NULL));
         }
         int button=gpio_get_level(GPIO_NUM_0);
-        if(previous_button && !button && now-button_at>300000) { (void)start_action(false);button_at=now; }
+        if(previous_button && !button && now-button_at>300000) { (void)start_action(ACTION_LED,0,0);button_at=now; }
         previous_button=button;
         if(atomic_exchange(&dtim_pulse,false)) burst_until=now+80000;
         if(atomic_load(&capture_requested)) {
@@ -229,14 +260,14 @@ static void worker(void *arg) {
         }
         if(state.phase==QUEUED) {
             started=now;atomic_store(&pending,true);
-            phase(peer_known?(state.photo?CAPTURING:WAKING):DISCOVERING);
+            phase(peer_known?action_phase():DISCOVERING);
         }
         if(state.busy) {
             if(now-started>240000000) fail("Capture timed out; check the remote camera and HaLow link.");
-            else if(state.phase==DISCOVERING || state.phase==CAPTURING || state.phase==WAKING) {
+            else if(state.phase==DISCOVERING || state.phase==CAPTURING || state.phase==WAKING || state.phase==VERSION_READING) {
                 if(now-stage_started>40000000) fail("Remote camera did not respond. Check that the nRF is powered.");
                 else if(now<burst_until && now-last_send>10000) {
-                    (void)send_packet(state.phase==DISCOVERING?CAM_HELLO:state.photo?CAM_CAPTURE:CAM_LED,state.id,0,0,peer_known?peer:cam_broadcast);
+                    (void)send_packet(state.phase==DISCOVERING?CAM_HELLO:state.action==ACTION_CAPTURE?CAM_CAPTURE:state.action==ACTION_VERSION?CAM_VERSION:CAM_LED,state.id,0,0,peer_known?peer:cam_broadcast);
                     last_send=now;
                 }
             } else if((state.phase==RECEIVING || state.phase==FINISHING) && (!last_send || now-last_send>350000)) {
@@ -256,15 +287,44 @@ static esp_err_t index_get(httpd_req_t *req) {
     return httpd_resp_send(req,camera_page,HTTPD_RESP_USE_STRLEN);
 }
 static esp_err_t status_get(httpd_req_t *req) {
-    char json[384];take();
-    snprintf(json,sizeof(json),"{\"state\":\"%s\",\"busy\":%s,\"peer\":%s,\"id\":%"PRIu32",\"total\":%"PRIu32",\"received\":%"PRIu32",\"retries\":%"PRIu32",\"error\":\"%s\",\"dropped_rx\":%u}",
-        phases[state.phase],(state.busy || atomic_load(&capture_requested))?"true":"false",state.peer?"true":"false",state.id,state.total,state.received,state.retries,state.error,atomic_load(&dropped_rx));
-    give();httpd_resp_set_type(req,"application/json");httpd_resp_set_hdr(req,"Cache-Control","no-store");
-    return httpd_resp_send(req,json,HTTPD_RESP_USE_STRLEN);
+    cJSON *json=cJSON_CreateObject();
+    if(!json) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
+    take();
+    cJSON_AddStringToObject(json,"state",phases[state.phase]);
+    cJSON_AddBoolToObject(json,"busy",state.busy || atomic_load(&capture_requested));
+    cJSON_AddBoolToObject(json,"peer",state.peer);
+    cJSON_AddNumberToObject(json,"id",state.id);cJSON_AddNumberToObject(json,"total",state.total);
+    cJSON_AddNumberToObject(json,"received",state.received);cJSON_AddNumberToObject(json,"retries",state.retries);
+    cJSON_AddStringToObject(json,"error",state.error);cJSON_AddStringToObject(json,"version",state.version);
+    cJSON_AddStringToObject(json,"version_hex",state.version_hex);
+    cJSON_AddNumberToObject(json,"width",state.width);cJSON_AddNumberToObject(json,"height",state.height);
+    cJSON_AddNumberToObject(json,"dropped_rx",atomic_load(&dropped_rx));give();
+    char *text=cJSON_PrintUnformatted(json);cJSON_Delete(json);
+    if(!text) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
+    httpd_resp_set_type(req,"application/json");httpd_resp_set_hdr(req,"Cache-Control","no-store");
+    esp_err_t rc=httpd_resp_sendstr(req,text);free(text);return rc;
 }
 static esp_err_t action_post(httpd_req_t *req) {
+    enum action action=!strcmp(req->uri,"/api/led")?ACTION_LED:!strcmp(req->uri,"/api/version")?ACTION_VERSION:ACTION_CAPTURE;
+    uint16_t width=640,height=480;
     httpd_resp_set_type(req,"application/json");httpd_resp_set_hdr(req,"Cache-Control","no-store");
-    if(!start_action(strcmp(req->uri,"/api/led")!=0)) {httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"{\"error\":\"A capture or photo download is already in progress.\"}");}
+    if(action==ACTION_CAPTURE && req->content_len) {
+        if(req->content_len>128) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Capture JSON is too large");
+        char body[129];size_t used=0;
+        while(used<req->content_len) {
+            int n=httpd_req_recv(req,body+used,req->content_len-used);
+            if(n<=0) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Incomplete capture JSON");
+            used+=n;
+        }
+        body[used]=0;cJSON *json=cJSON_Parse(body);
+        cJSON *w=cJSON_GetObjectItemCaseSensitive(json,"width"),*h=cJSON_GetObjectItemCaseSensitive(json,"height");
+        bool valid=cJSON_IsNumber(w) && cJSON_IsNumber(h) && w->valueint>0 && w->valueint<=UINT16_MAX &&
+            h->valueint>0 && h->valueint<=UINT16_MAX && w->valuedouble==w->valueint && h->valuedouble==h->valueint;
+        if(valid) {width=w->valueint;height=h->valueint;valid=cam_resolution_find(width,height)!=NULL;}
+        cJSON_Delete(json);
+        if(!valid) {httpd_resp_set_status(req,"400 Bad Request");return httpd_resp_sendstr(req,"{\"error\":\"Choose a supported camera resolution.\"}");}
+    }
+    if(!start_action(action,width,height)) {httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"{\"error\":\"A remote action or download is already in progress.\"}");}
     httpd_resp_set_status(req,"202 Accepted");return httpd_resp_sendstr(req,"{\"accepted\":true}");
 }
 static esp_err_t photo_get(httpd_req_t *req) {
@@ -299,6 +359,7 @@ static void wifi_web_start(void) {
         {.uri="/api/status",.method=HTTP_GET,.handler=status_get},
         {.uri="/api/capture",.method=HTTP_POST,.handler=action_post},
         {.uri="/api/led",.method=HTTP_POST,.handler=action_post},
+        {.uri="/api/version",.method=HTTP_POST,.handler=action_post},
         {.uri="/photo.jpg",.method=HTTP_GET,.handler=photo_get},
     };
     for(unsigned i=0;i<sizeof(routes)/sizeof(routes[0]);i++) ESP_ERROR_CHECK(httpd_register_uri_handler(server,&routes[i]));

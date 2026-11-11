@@ -21,7 +21,7 @@ static void codec(void) {
     assert(!cam_encode(wire,CAM_HEADER_SIZE-1,&p));
     p.size=CAM_BLOCK_SIZE+1;assert(!cam_encode(wire,sizeof(wire),&p));
     p.size=1;p.data=NULL;assert(!cam_encode(wire,sizeof(wire),&p));
-    for(unsigned type=CAM_HELLO;type<=CAM_LED_ACK;type++) {
+    for(unsigned type=CAM_HELLO;type<=CAM_VERSION_ACK;type++) {
         p=(struct cam_packet){.type=type,.session=42};
         n=cam_encode(wire,sizeof(wire),&p);assert(n==CAM_HEADER_SIZE && cam_decode(wire,n,&q));
         assert(q.type==type && q.session==42 && q.size==0);
@@ -67,9 +67,32 @@ static void bounds_and_bad_jpeg(void) {
     struct cam_packet p={.type=CAM_DATA,.session=1,.total=4,.size=4,.data=bad};
     assert(cam_image_accept(&image,&p)==CAM_IMAGE_INVALID);
 }
+static void capture_arguments(void) {
+    uint16_t width,height;
+    uint8_t args[]={0x00,0x05,0xd0,0x02};
+    struct cam_packet p={.type=CAM_CAPTURE,.size=4,.data=args};
+    assert(cam_capture_dimensions(&p,&width,&height) && width==1280 && height==720);
+    assert(cam_resolution_find(width,height)->code==0x44);
+    p.size=3;assert(!cam_capture_dimensions(&p,&width,&height));
+    p.size=4;args[0]=1;assert(!cam_capture_dimensions(&p,&width,&height));
+    p.size=0;assert(cam_capture_dimensions(&p,&width,&height) && width==640 && height==480);
+    p.type=CAM_VERSION;assert(!cam_capture_dimensions(&p,&width,&height));
+    assert(!cam_resolution_find(320,480));
+}
+static void jpeg_dimensions(void) {
+    const uint8_t jpeg[]={0xff,0xd8,0xff,0xe0,0,4,0x11,0x22,
+        0xff,0xc0,0,11,8,1,0xe0,2,0x80,1,1,0x11,0,0xff,0xd9};
+    uint16_t w,h;
+    assert(cam_jpeg_dimensions(jpeg,sizeof(jpeg),&w,&h) && w==640 && h==480);
+    for(size_t n=0;n<sizeof(jpeg)-2;n++) assert(!cam_jpeg_dimensions(jpeg,n,&w,&h));
+    uint8_t damaged[sizeof(jpeg)];memcpy(damaged,jpeg,sizeof(jpeg));
+    damaged[4]=255;assert(!cam_jpeg_dimensions(damaged,sizeof(damaged),&w,&h));
+    damaged[4]=0;damaged[15]=0;damaged[16]=0;
+    assert(!cam_jpeg_dimensions(damaged,sizeof(damaged),&w,&h));
+}
 int main(void) {
-    codec();bounds_and_bad_jpeg();
+    codec();bounds_and_bad_jpeg();capture_arguments();jpeg_dimensions();
     const uint32_t sizes[]={4,767,768,769,1535,1536,1537,32768,65536,CAM_MAX_JPEG};
     for(unsigned i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++) transfer(sizes[i]);
-    puts("PASS: CRC/codec corruption, truncation, bounds, stale/duplicate blocks, invalid JPEG, 10 image sizes through 512 KiB");
+    puts("PASS: camera arguments/JPEG dimensions, CRC/codec corruption, truncation, bounds, stale/duplicate blocks, invalid JPEG, 10 image sizes through 512 KiB");
 }

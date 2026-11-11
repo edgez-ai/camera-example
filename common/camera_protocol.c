@@ -17,7 +17,7 @@ uint32_t cam_crc32(const uint8_t *data, size_t length) {
 }
 size_t cam_encode(uint8_t *out,size_t capacity,const struct cam_packet *p) {
     if(!out || !p || p->size>CAM_BLOCK_SIZE || (p->size && !p->data) ||
-       capacity<CAM_HEADER_SIZE+p->size || p->type<CAM_HELLO || p->type>CAM_LED_ACK) return 0;
+       capacity<CAM_HEADER_SIZE+p->size || p->type<CAM_HELLO || p->type>CAM_VERSION_ACK) return 0;
     memset(out,0,CAM_HEADER_SIZE);
     memcpy(out,"EZCA",4); out[4]=1; out[5]=p->type;
     out[6]=p->size; out[7]=p->size>>8;
@@ -29,7 +29,7 @@ size_t cam_encode(uint8_t *out,size_t capacity,const struct cam_packet *p) {
 }
 bool cam_decode(const uint8_t *in,size_t length,struct cam_packet *p) {
     if(!in || !p || length<CAM_HEADER_SIZE || memcmp(in,"EZCA",4) ||
-       in[4]!=1 || in[5]<CAM_HELLO || in[5]>CAM_LED_ACK) return false;
+       in[4]!=1 || in[5]<CAM_HELLO || in[5]>CAM_VERSION_ACK) return false;
     uint16_t size=(uint16_t)in[6] | (uint16_t)in[7]<<8;
     if(size>CAM_BLOCK_SIZE || length!=CAM_HEADER_SIZE+size ||
        get32(in+24)!=cam_crc32(in,24) ||
@@ -61,4 +61,52 @@ enum cam_image_result cam_image_accept(struct cam_image *image,const struct cam_
     return image->bytes[0]==0xff && image->bytes[1]==0xd8 &&
         image->bytes[image->total-2]==0xff && image->bytes[image->total-1]==0xd9 ?
         CAM_IMAGE_COMPLETE : CAM_IMAGE_INVALID;
+}
+
+const struct cam_resolution *cam_resolution_find(uint16_t width,uint16_t height) {
+    /* Putal modes from offgrid-tracker's working camera_resolutions.h. */
+    static const struct cam_resolution modes[]={
+        {160,120,4,0x22},{320,240,4,0x11},{640,480,4,0x00},
+        {1024,768,5,0x33},{1280,720,5,0x44},{1280,960,5,0x55},
+        {1600,1200,5,0x77},{1920,1080,5,0x66},{2304,1296,5,0x88},
+    };
+    for(size_t i=0;i<sizeof(modes)/sizeof(modes[0]);i++)
+        if(modes[i].width==width && modes[i].height==height) return &modes[i];
+    return NULL;
+}
+bool cam_capture_dimensions(const struct cam_packet *packet,uint16_t *width,uint16_t *height) {
+    if(!packet || !width || !height || packet->type!=CAM_CAPTURE) return false;
+    uint16_t w=640,h=480;
+    if(packet->size) {
+        if(packet->size!=4 || !packet->data) return false;
+        w=(uint16_t)packet->data[0] | (uint16_t)packet->data[1]<<8;
+        h=(uint16_t)packet->data[2] | (uint16_t)packet->data[3]<<8;
+    }
+    if(!cam_resolution_find(w,h)) return false;
+    *width=w;*height=h;return true;
+}
+
+bool cam_jpeg_dimensions(const uint8_t *jpeg,size_t length,uint16_t *width,uint16_t *height) {
+    if(!jpeg || !width || !height || length<4 || jpeg[0]!=0xff || jpeg[1]!=0xd8) return false;
+    size_t at=2;
+    while(at<length) {
+        if(jpeg[at++]!=0xff) return false;
+        while(at<length && jpeg[at]==0xff) at++;
+        if(at>=length) return false;
+        uint8_t marker=jpeg[at++];
+        if(marker==0xda || marker==0xd9 || !marker) return false;
+        if(marker==0x01 || (marker>=0xd0 && marker<=0xd8)) continue;
+        if(length-at<2) return false;
+        size_t n=(size_t)jpeg[at]<<8 | jpeg[at+1];
+        if(n<2 || n>length-at) return false;
+        if(marker>=0xc0 && marker<=0xcf && marker!=0xc4 && marker!=0xc8 && marker!=0xcc) {
+            if(n<8) return false;
+            uint16_t h=(uint16_t)jpeg[at+3]<<8 | jpeg[at+4];
+            uint16_t w=(uint16_t)jpeg[at+5]<<8 | jpeg[at+6];
+            if(!w || !h) return false;
+            *width=w;*height=h;return true;
+        }
+        at+=n;
+    }
+    return false;
 }

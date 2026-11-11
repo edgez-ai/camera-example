@@ -7,8 +7,10 @@ The nRF wakes, powers the camera, captures a JPEG, and returns it in checked,
 retryable blocks. The page displays the completed image and offers a download.
 HC33's USER button (GPIO0, active low) and the page's **Wake LED** button
 send the same LED-only command: the nRF LED lights for five seconds, without
-powering the camera. **Take photo** is a separate page action. Serial `w`
-triggers the LED, `c` triggers a photo, and `s` prints current progress.
+powering the camera. **Take photo** sends the selected resolution to the nRF.
+**Get camera version** reads the camera firmware version without taking a photo.
+Serial `w` triggers the LED, `c` triggers a 640x480 photo, `v` reads the version,
+and `s` prints current progress.
 
 ## Clone and build
 
@@ -72,7 +74,15 @@ A generic 38400-baud VC0706 may require different camera settings.
 3. Open **http://192.168.4.1**. Keep this Wi-Fi connection even if the phone
    reports that it has no Internet access.
 4. Click **Wake LED** (or press HC33 USER) to check the remote LED.
-5. Click **Take photo** separately, wait for capture and progress, then view or save it.
+5. Click **Get camera version** to show the camera's version reply.
+6. Select a resolution, then click **Take photo**, wait for progress, and view or save it.
+
+The dropdown includes 160x120, 320x240, 640x480 (default), 1024x768, 1280x720,
+1280x960, 1600x1200, 1920x1080 and 2304x1296. Available modes depend on the
+attached camera. The selected width/height travel in the HTTP request and the
+HaLow capture payload; nRF applies their matching camera register setting.
+HC33 checks the received JPEG's actual dimensions against that request before
+publishing it. A camera that returns a different size produces an error.
 
 SSID/password are configurable under the ESP-IDF **Camera example** Kconfig
 menu. The page is fully local and needs no Appwrite, MQTT, cloud service, CDN,
@@ -84,7 +94,7 @@ reset; a reboot clears it. One camera/one capture is supported at a time.
 The ESP32-S3's **2.4 GHz WPA2 SoftAP** serves the browser. Independently,
 HC33's MM6108 runs the LED example's **HaLow AP timing interface**, and the
 nRF's MM8108 uses a **STA interface** with a static peer/BSSID contract.
-There are no on-air association exchanges or mesh peering. This is the same
+The AP BSSID is learned from discovery, never hardcoded. There are no on-air association exchanges or mesh peering. This is the same
 experimental manually configured AP/STA mechanism as the LED wake test,
 not native TWT on an association-free MESH interface.
 
@@ -114,8 +124,9 @@ header and data CRC-32, request/session IDs, absolute offsets and lengths.
 It pulls 768-byte blocks using stop-and-wait retransmission. Duplicate capture
 requests replay the original result instead of taking another photograph;
 read retries address the same frozen frame. Stale sessions, wrong offsets,
-invalid sizes and corrupted blocks cannot advance the receiver. A JPEG is
-published only after all bytes, JPEG markers and the finish exchange pass.
+invalid sizes and corrupted blocks cannot advance the receiver. Capture arguments
+are checked on both processors. A JPEG is
+published only after all bytes, JPEG markers, requested dimensions and the finish exchange pass.
 The action-frame camera protocol is unencrypted; the SoftAP password protects
 the browser connection, not the HaLow link. It is an evaluation example.
 
@@ -123,13 +134,16 @@ the browser connection, not the HaLow link. It is an evaluation example.
 | --- | --- |
 | `GET /` | Offline camera page |
 | `POST /api/led` | Queue LED-only wake, identical to HC33 USER |
-| `POST /api/capture` | Queue capture; 202 accepted or 409 busy |
+| `POST /api/capture` | JSON `{ "width": 640, "height": 480 }`; queue capture or 409 busy |
+| `POST /api/version` | Power camera, read version, power it off |
 | `GET /api/status` | Phase, session ID, progress, retries and error |
 | `GET /photo.jpg?id=ID` | Completed JPEG for that exact capture, or 404 |
 
 ```sh
 curl -X POST http://192.168.4.1/api/led
-curl -X POST http://192.168.4.1/api/capture
+curl -X POST http://192.168.4.1/api/version
+curl -X POST http://192.168.4.1/api/capture \
+  -H 'Content-Type: application/json' -d '{"width":1280,"height":720}'
 curl http://192.168.4.1/api/status
 # Replace ID with the completed capture's numeric id from status.
 curl 'http://192.168.4.1/photo.jpg?id=ID' -o photo.jpg
@@ -146,7 +160,15 @@ pio run -e nrf54-camera
 The host test runs the **same C codec and image assembler used by the HC33**
 with address/undefined-behavior sanitizers. It checks every single-bit packet
 corruption, truncated messages, buffer limits, wrong sessions, out-of-order and
-duplicate delivery, JPEG markers, and ten transfer sizes up to 512 KiB.
+duplicate delivery, JPEG markers and dimensions, capture arguments, and ten
+transfer sizes up to 512 KiB.
+Both the physical USER and web Wake LED actions were manually verified on
+2026-11-11. Native DTIM10 setup and five-second LED on/off cycles were also
+recorded in device logs. Camera communication uses the later working DMA
+receiver. This camera returns status 1 on its resolution-write ACK, matching
+the older driver's accepted framing; the receiver therefore requires the
+actual JPEG dimensions to match the selected mode.
+
 Firmware build and hardware results are recorded separately; compiling and
 simulating a transfer do not establish that a physical camera captured a photo.
 
