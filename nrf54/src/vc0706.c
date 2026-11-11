@@ -74,9 +74,9 @@ static void write_bytes(const uint8_t *bytes,size_t n) {
 }
 static void drain(void) {
     uint8_t b;
-    int64_t end=k_uptime_get()+40,quiet=k_uptime_get()+2;
+    int64_t end=k_uptime_get()+500,quiet=k_uptime_get()+20;
     while(k_uptime_get()<quiet && k_uptime_get()<end) {
-        if(pop(&b)) quiet=k_uptime_get()+2;
+        if(pop(&b)) quiet=k_uptime_get()+20;
         else k_msleep(1);
     }
 }
@@ -86,7 +86,11 @@ static int command(const uint8_t *bytes,size_t n,uint8_t op,int timeout) {
     int rc=exact(reply,sizeof(reply),timeout);
     if(rc) return rc;
     const uint8_t expected[]={0x76,0,op,0,0};
-    return memcmp(reply,expected,sizeof(reply)) ? -EBADMSG : 0;
+    if(memcmp(reply,expected,sizeof(reply))) {
+        LOG_ERR("Command 0x%02x unexpected ACK %02x %02x %02x %02x %02x",op,reply[0],reply[1],reply[2],reply[3],reply[4]);
+        return -EBADMSG;
+    }
+    return 0;
 }
 static int reset(void) {
     const uint8_t cmd[]={0x56,0,0x26,0},prefix[]={0x76,0,0x26,0};
@@ -147,6 +151,14 @@ int vc0706_capture(uint32_t *length) {
     rc=exact(version_header,sizeof(version_header),2000);if(rc) goto fail;
     const uint8_t version_prefix[]={0x76,0,0x11,0};
     if(memcmp(version_header,version_prefix,sizeof(version_prefix))) { rc=-EBADMSG;goto fail; }
+    /* Consume the optional version body before sending another command. */
+    uint8_t version_length,version[64];
+    rc=exact(&version_length,1,250);
+    if(!rc) {
+        if(!version_length || version_length>sizeof(version)) { rc=-EBADMSG;goto fail; }
+        rc=exact(version,version_length,2000);if(rc) goto fail;
+        LOG_INF("Camera version received bytes=%u",version_length);
+    } else if(rc!=-ETIMEDOUT) goto fail;
     drain();
     LOG_INF("Camera version prefix acknowledged");
     stage="release-frame";

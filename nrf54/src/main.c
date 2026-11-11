@@ -141,6 +141,7 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
             if(last_error) error(session,last_error,peer);
             else if(image_open) (void)send_packet(CAM_CAPTURED,session,0,total,NULL,0,peer);
             else error(session,CAM_ERR_SESSION,peer);
+            if(!image_open) { k_msleep(30);sleep_idle(); }
             return;
         }
         if(image_open) { error(p->session,CAM_ERR_BUSY,peer); return; }
