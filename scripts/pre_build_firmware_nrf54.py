@@ -45,12 +45,18 @@ def patch_zephyr_440_platformio_builder():
     new = 'env.Append(LIBS=[lib_dep["lib_path"]])'
     contents = builder.read_text(encoding="utf-8")
     changed = False
+    # Upgrade existing local framework hooks without inserting a second block.
+    old_ninja = '    ninja = os.path.join(platform.get_package_dir("tool-ninja"), "ninja")'
+    new_ninja = '    ninja = os.environ.get("EDGEZ_NINJA") or os.path.join(platform.get_package_dir("tool-ninja"), "ninja")'
+    if old_ninja in contents:
+        contents = contents.replace(old_ninja, new_ninja)
+        changed = True
     if old in contents:
         contents = contents.replace(old, new)
         changed = True
 
     anchor = "target_configs = load_target_configurations(codemodel)\n"
-    morse_build = '''\n# PlatformIO consumes CMake's code model but does not execute custom targets.\n# Build Morse's merged/mangled archive before SCons resolves its dependencies.\nif os.environ.get("MORSE_SM_USE_APP_BINARIES"):\n    ninja = os.path.join(platform.get_package_dir("tool-ninja"), "ninja")\n    subprocess.check_call([ninja, "-C", BUILD_DIR, "libmorse_build"])\n'''
+    morse_build = '''\n# PlatformIO consumes CMake's code model but does not execute custom targets.\n# Build Morse's merged/mangled archive before SCons resolves its dependencies.\nif os.environ.get("MORSE_SM_USE_APP_BINARIES"):\n    ninja = os.environ.get("EDGEZ_NINJA") or os.path.join(platform.get_package_dir("tool-ninja"), "ninja")\n    subprocess.check_call([ninja, "-C", BUILD_DIR, "libmorse_build"])\n'''
     previous_morse_build = morse_build
     # Ninja may regenerate CMake after a module source list changes. Refresh
     # the model before SCons chooses objects, otherwise new RF sources are

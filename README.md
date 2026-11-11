@@ -61,8 +61,8 @@ carrier's camera power connection. The camera replaces the GPS on UART22;
 IMU, ADC and GPS services are disabled. UART pins return to their sleep pinctrl
 state and camera power is disabled after capture transfer or abandonment.
 Edit `zephyr/boards/camera.overlay` for another wiring layout and
-`CONFIG_CAMERA_UART_BAUD` in `zephyr/prj.conf` for another baud rate. The default
-resolution command is the same 640x480 command used in the existing diagnostic.
+`CONFIG_CAMERA_UART_BAUD` in `zephyr/prj.conf` for another baud rate. The receiver uses the later working camera example's double-buffered DMA UART
+path. The default resolution command is its 640x480 setting.
 A generic 38400-baud VC0706 may require different camera settings.
 
 ## Use the page
