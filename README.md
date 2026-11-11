@@ -104,8 +104,11 @@ not native TWT on an association-free MESH interface.
   **1.024 seconds**. Dynamic PS timeout: **13 ms**, checked after setup.
 - HC33 sets AID 1's TIM pending bit and sends a bounded capture burst around
   the actual DTIM beacon. No serial mode selection is required.
-- The nRF holds the radio awake throughout camera capture and block reads,
-  then releases host wake. The camera turns off and its UART suspends.
+- During camera/version transactions the nRF explicitly disables firmware
+  radio power saving and holds host wake, keeping RX available between block
+  requests. It waits for actual TX completion before ending the transaction,
+  then restores DTIM10/13 ms and releases host wake. Camera power and UART are
+  off while idle.
 - There are no periodic sensor reports or autonomous captures. Initial
   discovery retries until HC33 is found. A lost transfer expires after
   90 seconds without requests and switches the camera off.

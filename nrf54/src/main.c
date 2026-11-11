@@ -19,7 +19,10 @@ static struct edgez_umac_radio_info info;
 static uint16_t sequence;
 static atomic_t rx_total,rx_valid;
 static uint8_t peer[6];
-static bool paired,ps_ready,image_open;
+static bool paired,ps_ready,image_open,transaction_awake;
+K_SEM_DEFINE(tx_done,0,1);
+static atomic_t tx_armed,tx_failed;
+static uintptr_t tx_expected;
 static uint32_t session,total,boot_nonce,last_error;
 static int64_t last_activity,led_until;
 static uint32_t led_session,version_session;
@@ -39,7 +42,14 @@ static void radio_fault(void *ctx) {
     ARG_UNUSED(ctx);
     LOG_ERR("Radio requested restart; reset nRF to recover");
 }
-static const struct edgez_umac_event_ops events={.rx_frame=receive,.hardware_restart_required=radio_fault};
+static void transmit_done(void *ctx,const struct edgez_umac_tx_status *status) {
+    ARG_UNUSED(ctx);
+    if(atomic_get(&tx_armed) && status->token==tx_expected) {
+        atomic_set(&tx_failed,!!(status->status_flags & EDGEZ_RF_TX_STATUS_FAILED));
+        k_sem_give(&tx_done);
+    }
+}
+static const struct edgez_umac_event_ops events={.rx_frame=receive,.tx_status=transmit_done,.hardware_restart_required=radio_fault};
 static bool checked(void *cmd,uint16_t id,uint16_t vif) {
     struct { struct morse_cmd_resp response; uint8_t extra[128]; } reply={0};
     uint32_t len=sizeof(reply);
@@ -106,15 +116,41 @@ static bool configure_sleep(void) {
 static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t length,
                         const uint8_t *data,uint16_t size,const uint8_t *dest) {
     struct cam_packet p={.type=type,.session=id,.offset=offset,.total=length,.data=data,.size=size};
-    return cam_radio_send(&radio,info.mac_addr,dest,true,&sequence,&p);
+    k_sem_reset(&tx_done);atomic_clear(&tx_failed);
+    tx_expected=(uint16_t)(sequence+1U);atomic_set(&tx_armed,1);
+    bool queued=cam_radio_send(&radio,info.mac_addr,dest,true,&sequence,&p);
+    bool completed=queued && !k_sem_take(&tx_done,K_MSEC(250));
+    atomic_clear(&tx_armed);
+    bool ok=completed && !atomic_get(&tx_failed);
+    if(!ok) LOG_WRN("Radio TX type=%u offset=%u queued=%u complete=%u failed=%ld",type,offset,queued,completed,(long)atomic_get(&tx_failed));
+    return ok;
 }
 static void error(uint32_t id,uint32_t code,const uint8_t *dest) {
     (void)send_packet(CAM_ERROR,id,code,0,NULL,0,dest);
 }
+static bool camera_radio_awake(void) {
+    if(!ps_ready || transaction_awake) return true;
+    struct morse_cmd_req_config_ps ps=MORSE_COMMAND_INIT(ps,MORSE_CMD_ID_CONFIG_PS,radio.vif_id,
+        .enabled=false,.dynamic_ps_offload=false);
+    if(!checked(&ps,MORSE_CMD_ID_CONFIG_PS,radio.vif_id)) return false;
+    transaction_awake=true;
+    LOG_INF("Camera transaction: firmware PS disabled, radio RX held awake");return true;
+}
 static void sleep_idle(void) {
     vc0706_off();
     gpio_pin_set_dt(&led,0);
-    if(ps_ready) (void)mmdrv_set_wake_enabled(false);
+    if(ps_ready) {
+        if(transaction_awake) {
+            struct morse_cmd_req_config_ps ps=MORSE_COMMAND_INIT(ps,MORSE_CMD_ID_CONFIG_PS,radio.vif_id,
+                .enabled=true,.dynamic_ps_offload=true);
+            if(!checked(&ps,MORSE_CMD_ID_CONFIG_PS,radio.vif_id) ||
+               mmdrv_set_dynamic_ps_timeout(13)!=MMWLAN_SUCCESS) {
+                LOG_ERR("DTIM restore failed; host wake retained");return;
+            }
+            transaction_awake=false;LOG_INF("Camera transaction ended; DTIM10/13ms restored");
+        }
+        (void)mmdrv_set_wake_enabled(false);
+    }
 }
 static void handle(const struct cam_event *event,const struct cam_packet *p) {
     if(p->type==CAM_HELLO) {
@@ -142,6 +178,7 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(image_open) { error(p->session,CAM_ERR_BUSY,peer);return; }
         if(version_session!=p->session) {
             version_session=p->session;
+            if(!camera_radio_awake()) {version_result=-EIO;error(p->session,CAM_ERR_RADIO,peer);sleep_idle();return;}
             version_result=vc0706_version(version_data,sizeof(version_data),&version_length);
         }
         if(version_result) error(p->session,CAM_ERR_CAMERA,peer);
@@ -162,6 +199,7 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(!cam_capture_dimensions(p,&width,&height)) {
             error(p->session,CAM_ERR_RANGE,peer);k_msleep(30);sleep_idle();return;
         }
+        if(!camera_radio_awake()) {error(p->session,CAM_ERR_RADIO,peer);sleep_idle();return;}
         session=p->session; last_error=0; total=0;
         gpio_pin_set_dt(&led,1);
         int rc=vc0706_capture(width,height,&total);
@@ -176,9 +214,11 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
     } else if(p->type==CAM_READ && p->session==session && image_open) {
         uint16_t n=(uint16_t)MIN(CAM_BLOCK_SIZE,total>p->offset ? total-p->offset : 0);
         if(p->total!=total || !cam_valid_block(total,p->offset,n)) { error(session,CAM_ERR_RANGE,peer); return; }
+        if(!p->offset) LOG_INF("Camera block READ offset=0 size=%u",n);
         int rc=vc0706_read(p->offset,block,n);
         if(rc) { LOG_ERR("Camera read offset=%u failed=%d",p->offset,rc); error(session,CAM_ERR_CAMERA,peer); return; }
-        (void)send_packet(CAM_DATA,session,p->offset,total,block,n,peer);
+        bool sent=send_packet(CAM_DATA,session,p->offset,total,block,n,peer);
+        if(!p->offset || p->offset+n==total) LOG_INF("Camera block DATA offset=%u size=%u sent=%u",p->offset,n,sent);
     } else if(p->type==CAM_FINISH && p->session==session) {
         (void)send_packet(CAM_FINISHED,session,0,total,NULL,0,peer);
         image_open=false;
