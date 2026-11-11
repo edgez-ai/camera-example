@@ -17,7 +17,7 @@ uint32_t cam_crc32(const uint8_t *data, size_t length) {
 }
 size_t cam_encode(uint8_t *out,size_t capacity,const struct cam_packet *p) {
     if(!out || !p || p->size>CAM_BLOCK_SIZE || (p->size && !p->data) ||
-       capacity<CAM_HEADER_SIZE+p->size || p->type<CAM_HELLO || p->type>CAM_ERROR) return 0;
+       capacity<CAM_HEADER_SIZE+p->size || p->type<CAM_HELLO || p->type>CAM_LED_ACK) return 0;
     memset(out,0,CAM_HEADER_SIZE);
     memcpy(out,"EZCA",4); out[4]=1; out[5]=p->type;
     out[6]=p->size; out[7]=p->size>>8;
@@ -29,7 +29,7 @@ size_t cam_encode(uint8_t *out,size_t capacity,const struct cam_packet *p) {
 }
 bool cam_decode(const uint8_t *in,size_t length,struct cam_packet *p) {
     if(!in || !p || length<CAM_HEADER_SIZE || memcmp(in,"EZCA",4) ||
-       in[4]!=1 || in[5]<CAM_HELLO || in[5]>CAM_ERROR) return false;
+       in[4]!=1 || in[5]<CAM_HELLO || in[5]>CAM_LED_ACK) return false;
     uint16_t size=(uint16_t)in[6] | (uint16_t)in[7]<<8;
     if(size>CAM_BLOCK_SIZE || length!=CAM_HEADER_SIZE+size ||
        get32(in+24)!=cam_crc32(in,24) ||

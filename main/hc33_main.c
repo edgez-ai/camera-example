@@ -34,16 +34,17 @@ static bool peer_known;
 static QueueHandle_t rx_queue;
 static SemaphoreHandle_t lock;
 static atomic_bool pending,dtim_pulse,capture_requested;
+static bool requested_photo;
 static struct cam_image assembly;
 static atomic_uint dropped_rx;
-enum phase { IDLE,QUEUED,DISCOVERING,CAPTURING,RECEIVING,FINISHING,COMPLETE,FAILED };
-static const char *const phases[]={"idle","queued","discovering","capturing","receiving","finishing","complete","error"};
+enum phase { IDLE,QUEUED,DISCOVERING,CAPTURING,RECEIVING,FINISHING,COMPLETE,WAKING,LED_COMPLETE,FAILED };
+static const char *const phases[]={"idle","queued","discovering","capturing","receiving","finishing","complete","waking","led-complete","error"};
 static struct {
     enum phase phase;
     uint32_t id,total,received,retries;
     uint8_t *image;
     unsigned readers;
-    bool busy,peer;
+    bool busy,peer,photo;
     char error[96];
 } state;
 static int64_t started,stage_started,last_send,burst_until;
@@ -131,11 +132,12 @@ static void phase(enum phase phase) {
 static void fail(const char *message) {
     (void)send_packet(CAM_FINISH,state.id,0,state.total,peer);
     take();snprintf(state.error,sizeof(state.error),"%s",message);state.phase=FAILED;state.busy=false;give();
-    atomic_store(&pending,false);ESP_LOGE(TAG,"Capture failed: %s",message);
+    atomic_store(&pending,false);ESP_LOGE(TAG,"Remote action failed: %s",message);
 }
-static bool start_capture(void) {
+static bool start_action(bool photo) {
     take();
     if(state.busy || state.readers || atomic_load(&capture_requested)) { give();return false; }
+    requested_photo=photo;
     atomic_store(&capture_requested,true);
     give();return true;
 }
@@ -146,7 +148,7 @@ static void begin_capture(void) {
     free(state.image);state.image=NULL;
     state.id++;if(!state.id)state.id=1;
     state.total=state.received=state.retries=0;state.error[0]=0;
-    state.busy=true;state.phase=QUEUED;
+    state.busy=true;state.phase=QUEUED;state.photo=requested_photo;
     give();
 }
 static void handle(const struct cam_event *event,const struct cam_packet *p) {
@@ -156,10 +158,15 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(p->type==CAM_HELLO_ACK && (!state.busy || state.phase!=DISCOVERING || p->session!=state.id)) return;
         memcpy(peer,event->source,6);peer_known=true;
         take();state.peer=true;give();
-        if(state.busy && state.phase==DISCOVERING) phase(CAPTURING);
+        if(state.busy && state.phase==DISCOVERING) phase(state.photo?CAPTURING:WAKING);
         return;
     }
     if(!state.busy || !peer_known || memcmp(peer,event->source,6) || p->session!=state.id) return;
+    if(state.phase==WAKING && p->type==CAM_LED_ACK) {
+        take();state.phase=LED_COMPLETE;state.busy=false;give();atomic_store(&pending,false);
+        ESP_LOGI(TAG,"LED acknowledged id=%"PRIu32" on_ms=%"PRIu32" camera_requested=0",state.id,p->total);
+        return;
+    }
     if(p->type==CAM_ERROR) {
         const char *message=p->offset==CAM_ERR_CAMERA?"Camera UART/capture failed. Check camera power and wiring.":
             p->offset==CAM_ERR_BUSY?"Remote camera is busy. Retry after the old capture expires.":
@@ -194,12 +201,13 @@ static void worker(void *arg) {
         int64_t now=esp_timer_get_time();
         uint8_t command;
         if(uart_read_bytes(UART_NUM_0,&command,1,0)==1) {
-            if(command=='w') (void)start_capture();
+            if(command=='w') (void)start_action(false);
+            if(command=='c') (void)start_action(true);
             if(command=='s') ESP_LOGI(TAG,"STATUS state=%s peer=%u id=%"PRIu32" received=%"PRIu32" total=%"PRIu32" retries=%"PRIu32,
                 phases[state.phase],peer_known,state.id,state.received,state.total,state.retries);
         }
         int button=gpio_get_level(GPIO_NUM_0);
-        if(previous_button && !button && now-button_at>300000) { (void)start_capture();button_at=now; }
+        if(previous_button && !button && now-button_at>300000) { (void)start_action(false);button_at=now; }
         previous_button=button;
         if(atomic_exchange(&dtim_pulse,false)) burst_until=now+80000;
         if(atomic_load(&capture_requested)) {
@@ -213,14 +221,14 @@ static void worker(void *arg) {
         }
         if(state.phase==QUEUED) {
             started=now;atomic_store(&pending,true);
-            phase(peer_known?CAPTURING:DISCOVERING);
+            phase(peer_known?(state.photo?CAPTURING:WAKING):DISCOVERING);
         }
         if(state.busy) {
             if(now-started>240000000) fail("Capture timed out; check the remote camera and HaLow link.");
-            else if(state.phase==DISCOVERING || state.phase==CAPTURING) {
+            else if(state.phase==DISCOVERING || state.phase==CAPTURING || state.phase==WAKING) {
                 if(now-stage_started>40000000) fail("Remote camera did not respond. Check that the nRF is powered.");
                 else if(now<burst_until && now-last_send>10000) {
-                    (void)send_packet(state.phase==DISCOVERING?CAM_HELLO:CAM_CAPTURE,state.id,0,0,peer_known?peer:cam_broadcast);
+                    (void)send_packet(state.phase==DISCOVERING?CAM_HELLO:state.photo?CAM_CAPTURE:CAM_LED,state.id,0,0,peer_known?peer:cam_broadcast);
                     last_send=now;
                 }
             } else if((state.phase==RECEIVING || state.phase==FINISHING) && (!last_send || now-last_send>350000)) {
@@ -246,9 +254,9 @@ static esp_err_t status_get(httpd_req_t *req) {
     give();httpd_resp_set_type(req,"application/json");httpd_resp_set_hdr(req,"Cache-Control","no-store");
     return httpd_resp_send(req,json,HTTPD_RESP_USE_STRLEN);
 }
-static esp_err_t capture_post(httpd_req_t *req) {
+static esp_err_t action_post(httpd_req_t *req) {
     httpd_resp_set_type(req,"application/json");httpd_resp_set_hdr(req,"Cache-Control","no-store");
-    if(!start_capture()) {httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"{\"error\":\"A capture or photo download is already in progress.\"}");}
+    if(!start_action(strcmp(req->uri,"/api/led")!=0)) {httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"{\"error\":\"A capture or photo download is already in progress.\"}");}
     httpd_resp_set_status(req,"202 Accepted");return httpd_resp_sendstr(req,"{\"accepted\":true}");
 }
 static esp_err_t photo_get(httpd_req_t *req) {
@@ -281,7 +289,8 @@ static void wifi_web_start(void) {
     const httpd_uri_t routes[]={
         {.uri="/",.method=HTTP_GET,.handler=index_get},
         {.uri="/api/status",.method=HTTP_GET,.handler=status_get},
-        {.uri="/api/capture",.method=HTTP_POST,.handler=capture_post},
+        {.uri="/api/capture",.method=HTTP_POST,.handler=action_post},
+        {.uri="/api/led",.method=HTTP_POST,.handler=action_post},
         {.uri="/photo.jpg",.method=HTTP_GET,.handler=photo_get},
     };
     for(unsigned i=0;i<sizeof(routes)/sizeof(routes[0]);i++) ESP_ERROR_CHECK(httpd_register_uri_handler(server,&routes[i]));

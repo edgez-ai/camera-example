@@ -20,7 +20,8 @@ static uint16_t sequence;
 static uint8_t peer[6];
 static bool paired,ps_ready,image_open;
 static uint32_t session,total,boot_nonce,last_error;
-static int64_t last_activity;
+static int64_t last_activity,led_until;
+static uint32_t led_session;
 static uint8_t block[CAM_BLOCK_SIZE];
 static const struct gpio_dt_spec radio_power=GPIO_DT_SPEC_GET(DT_PATH(zephyr_user),halow_power_en_gpios);
 static const struct gpio_dt_spec led=GPIO_DT_SPEC_GET(DT_ALIAS(led0),gpios);
@@ -120,7 +121,20 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
     if(!paired || memcmp(peer,event->source,6)) return;
     (void)mmdrv_set_wake_enabled(true);
     last_activity=k_uptime_get();
+    if(p->type==CAM_LED && p->session) {
+        if(image_open) { error(p->session,CAM_ERR_BUSY,peer); return; }
+        if(p->session!=led_session) {
+            led_session=p->session;led_until=k_uptime_get()+5000;
+            gpio_pin_set_dt(&led,1);
+            LOG_INF("LED ON session=%u duration_ms=5000 camera_power=off",led_session);
+        }
+        (void)send_packet(CAM_LED_ACK,p->session,0,5000,NULL,0,peer);
+        k_msleep(30);
+        if(ps_ready) (void)mmdrv_set_wake_enabled(false);
+        return;
+    }
     if(p->type==CAM_CAPTURE && p->session) {
+        led_until=0;
         if(p->session==session) {
             if(last_error) error(session,last_error,peer);
             else if(image_open) (void)send_packet(CAM_CAPTURED,session,0,total,NULL,0,peer);
@@ -188,7 +202,11 @@ int main(void) {
     }
     sleep_idle();
     for(;;) {
-        int rc=k_msgq_get(&rx_queue,&event,image_open ? K_MSEC(1000) : K_FOREVER);
+        int rc=k_msgq_get(&rx_queue,&event,led_until ? K_MSEC(30) : image_open ? K_MSEC(1000) : K_FOREVER);
+        if(led_until && k_uptime_get()>=led_until) {
+            led_until=0;
+            if(!image_open) { gpio_pin_set_dt(&led,0);LOG_INF("LED OFF session=%u",led_session); }
+        }
         if(!rc && cam_decode(event.bytes,event.length,&p)) handle(&event,&p);
         if(image_open && k_uptime_get()-last_activity>90000) {
             LOG_WRN("Abandoned capture expired"); image_open=false; last_error=CAM_ERR_TIMEOUT; sleep_idle();

@@ -5,8 +5,10 @@ EdgeZ nRF54L15 + FGH200M/MM8108 remote node with a Putal/VC0706 UART camera.
 Connect a phone or laptop to HC33's Wi-Fi, open its page, and click **Take photo**.
 The nRF wakes, powers the camera, captures a JPEG, and returns it in checked,
 retryable blocks. The page displays the completed image and offers a download.
-HC33's USER button (GPIO0, active low) or serial `w` also starts a capture;
-serial `s` prints current progress.
+HC33's USER button (GPIO0, active low) and the page's **Wake LED** button
+send the same LED-only command: the nRF LED lights for five seconds, without
+powering the camera. **Take photo** is a separate page action. Serial `w`
+triggers the LED, `c` triggers a photo, and `s` prints current progress.
 
 ## Clone and build
 
@@ -66,7 +68,8 @@ A generic 38400-baud VC0706 may require different camera settings.
 2. Join **EdgeZ-Camera**, password **edgez-camera**.
 3. Open **http://192.168.4.1**. Keep this Wi-Fi connection even if the phone
    reports that it has no Internet access.
-4. Click **Take photo**, wait for capture and progress, then view or save it.
+4. Click **Wake LED** (or press HC33 USER) to check the remote LED.
+5. Click **Take photo** separately, wait for capture and progress, then view or save it.
 
 SSID/password are configurable under the ESP-IDF **Camera example** Kconfig
 menu. The page is fully local and needs no Appwrite, MQTT, cloud service, CDN,
@@ -116,11 +119,13 @@ the browser connection, not the HaLow link. It is an evaluation example.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | Offline camera page |
+| `POST /api/led` | Queue LED-only wake, identical to HC33 USER |
 | `POST /api/capture` | Queue capture; 202 accepted or 409 busy |
 | `GET /api/status` | Phase, session ID, progress, retries and error |
 | `GET /photo.jpg?id=ID` | Completed JPEG for that exact capture, or 404 |
 
 ```sh
+curl -X POST http://192.168.4.1/api/led
 curl -X POST http://192.168.4.1/api/capture
 curl http://192.168.4.1/api/status
 # Replace ID with the completed capture's numeric id from status.

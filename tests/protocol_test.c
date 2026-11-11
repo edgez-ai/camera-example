@@ -21,7 +21,7 @@ static void codec(void) {
     assert(!cam_encode(wire,CAM_HEADER_SIZE-1,&p));
     p.size=CAM_BLOCK_SIZE+1;assert(!cam_encode(wire,sizeof(wire),&p));
     p.size=1;p.data=NULL;assert(!cam_encode(wire,sizeof(wire),&p));
-    for(unsigned type=CAM_HELLO;type<=CAM_ERROR;type++) {
+    for(unsigned type=CAM_HELLO;type<=CAM_LED_ACK;type++) {
         p=(struct cam_packet){.type=type,.session=42};
         n=cam_encode(wire,sizeof(wire),&p);assert(n==CAM_HEADER_SIZE && cam_decode(wire,n,&q));
         assert(q.type==type && q.session==42 && q.size==0);
