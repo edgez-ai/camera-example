@@ -190,7 +190,12 @@ transport; the browser still reported an error, which is being isolated using
 the dummy-image test. The nRF then logged camera
 power-off and restoration of DTIM10/13 ms. Larger 768-byte replies did not
 complete reception in this setup; they are not a validated mode for this
-example. Camera communication uses the later working DMA receiver. This camera returns status 1 on its resolution-write ACK, matching
+example. The dummy mode was then flashed on both boards: three consecutive
+640x480 transfers completed with zero retries, 7,910 bytes each, and matching
+reference CRC32 `75ff25b4`. Each restored DTIM10/13 ms afterward while camera
+power stayed off. The TEST IMAGE / NO CAMERA picture was also confirmed on
+the HC33 web page. Real camera capture remains a separate investigation.
+Camera communication uses the later working DMA receiver. This camera returns status 1 on its resolution-write ACK, matching
 the older driver's accepted framing; the receiver therefore requires the
 actual JPEG dimensions to match the selected mode.
 
