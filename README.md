@@ -18,6 +18,12 @@ NO CAMERA**, with camera power off. All dropdown sizes have checked-in fixtures.
 Connect a phone or laptop to HC33's Wi-Fi, open its page, and click **Take photo**.
 The nRF wakes and returns a JPEG in checked, retryable blocks. In real-camera
 mode it powers the camera and captures first; dummy mode reads a known fixture from flash. The page displays the completed image and offers a download.
+HC33 starts its Wi-Fi and web server before initializing the HaLow link. The
+page is available even when the nRF node or camera is disconnected. It shows
+remote-link startup/failure separately from node discovery; discovery does not
+claim that a physical camera is attached. Camera commands report failures on
+the page without taking down the local Wi-Fi or HTTP server.
+
 HC33's USER button (GPIO0, active low) and the page's **Wake LED** button
 send the same LED-only command: the nRF LED lights for five seconds, without
 powering the camera. **Take photo** sends the selected resolution to the nRF.
@@ -169,6 +175,7 @@ curl 'http://192.168.4.1/photo.jpg?id=ID' -o photo.jpg
 
 ```sh
 python3 scripts/test_protocol.py
+node tests/web_page_test.cjs
 pio run -e hc33
 pio run -e nrf54-camera
 ```

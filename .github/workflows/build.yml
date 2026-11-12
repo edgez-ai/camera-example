@@ -9,6 +9,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python3 scripts/test_protocol.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node tests/web_page_test.cjs
   firmware:
     runs-on: ubuntu-latest
     strategy:

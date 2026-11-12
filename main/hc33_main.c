@@ -34,7 +34,7 @@ static uint8_t peer[6];
 static bool peer_known;
 static QueueHandle_t rx_queue;
 static SemaphoreHandle_t lock;
-static atomic_bool pending,dtim_pulse,capture_requested;
+static atomic_bool pending,dtim_pulse,capture_requested,radio_ready,radio_failed;
 enum action { ACTION_LED,ACTION_CAPTURE,ACTION_VERSION };
 static enum action requested_action;
 static uint16_t requested_width,requested_height;
@@ -94,7 +94,10 @@ static void receive(void *ctx,const struct edgez_umac_rx_frame *frame) {
         if(xQueueSend(rx_queue,&event,0)!=pdPASS) atomic_fetch_add(&dropped_rx,1);
     }
 }
-static void radio_fault(void *ctx) { (void)ctx; ESP_LOGE(TAG,"Radio restart requested; reboot HC33 to recover"); }
+static void radio_fault(void *ctx) {
+    (void)ctx;atomic_store(&radio_ready,false);atomic_store(&radio_failed,true);
+    ESP_LOGE(TAG,"Radio restart requested; web gateway remains available");
+}
 static const struct edgez_umac_event_ops events={.rx_frame=receive,.hardware_restart_required=radio_fault};
 static int add_ap(void *ctx,const uint8_t *mac,uint16_t *vif) {
     (void)ctx;
@@ -107,18 +110,23 @@ static int add_ap(void *ctx,const uint8_t *mac,uint16_t *vif) {
        reply.hdr.message_id!=MORSE_CMD_ID_ADD_INTERFACE) return MMWLAN_ERROR;
     *vif=reply.hdr.vif_id; return MMWLAN_SUCCESS;
 }
-static void halow_start(void) {
+static bool radio_step(int result,const char *stage) {
+    if(!result) return true;
+    ESP_LOGE(TAG,"HaLow initialization failed stage=%s result=%d; web gateway remains available",stage,result);
+    return false;
+}
+static bool halow_start(void) {
     static struct edgez_rf_backend_ops ops;
-    ESP_ERROR_CHECK(edgez_rf_platform_init()==0?ESP_OK:ESP_FAIL);
+    if(!radio_step(edgez_rf_platform_init(),"platform")) return false;
     ops=*edgez_rf_driver_ops();ops.add_mesh_interface=add_ap;
     const struct edgez_umac_config config={.country_code=CAM_COUNTRY,
         .channel={.operating_frequency_hz=CAM_FREQUENCY_HZ,.operating_bw_mhz=1,.primary_bw_mhz=1},
         .beacon_interval_tu=100,.dtim_period=CAM_DTIM_PERIOD,.compressed_ssid=0,
         .rate_control={.initial_mcs=0,.maximum_mcs=0},.enable_beaconing=false};
-    ESP_ERROR_CHECK(edgez_umac_bind(&radio,&ops,NULL)==0?ESP_OK:ESP_FAIL);
-    ESP_ERROR_CHECK(edgez_umac_set_event_ops(&radio,&events,NULL)==0?ESP_OK:ESP_FAIL);
-    ESP_ERROR_CHECK(edgez_rf_bind_umac(&radio)==0?ESP_OK:ESP_FAIL);
-    ESP_ERROR_CHECK(edgez_umac_start(&radio,&config,&info)==0?ESP_OK:ESP_FAIL);
+    if(!radio_step(edgez_umac_bind(&radio,&ops,NULL),"bind")) return false;
+    if(!radio_step(edgez_umac_set_event_ops(&radio,&events,NULL),"events")) return false;
+    if(!radio_step(edgez_rf_bind_umac(&radio),"driver-bind")) return false;
+    if(!radio_step(edgez_umac_start(&radio,&config,&info),"start")) return false;
     uint8_t frame[128]={0x1c,0};memcpy(frame+4,info.mac_addr,6);size_t n=15;
     const uint8_t timing[]={213,8,1,0,100,0,0,0,0,0,5,6,0,CAM_DTIM_PERIOD,0x3e,0,1,0};
     memcpy(frame+n,timing,sizeof(timing));n+=sizeof(timing);
@@ -128,10 +136,11 @@ static void halow_start(void) {
     memcpy(frame+n,operation,sizeof(operation));n+=sizeof(operation);
     frame[n++]=0;frame[n++]=sizeof(CAM_SSID)-1;
     memcpy(frame+n,CAM_SSID,sizeof(CAM_SSID)-1);n+=sizeof(CAM_SSID)-1;
-    ESP_ERROR_CHECK(radio.driver->configure_bss(radio.driver_ctx,radio.vif_id,100,CAM_DTIM_PERIOD,cam_cssid())==0?ESP_OK:ESP_FAIL);
+    if(!radio_step(radio.driver->configure_bss(radio.driver_ctx,radio.vif_id,100,CAM_DTIM_PERIOD,cam_cssid()),"bss")) return false;
     const struct edgez_rf_beacon_template beacon={.frame=frame,.frame_length=n,.mcs=0,.bandwidth_mhz=1};
-    ESP_ERROR_CHECK(edgez_umac_enable_beaconing(&radio,&beacon)==0?ESP_OK:ESP_FAIL);
+    if(!radio_step(edgez_umac_enable_beaconing(&radio,&beacon),"beacon")) return false;
     ESP_LOGI(TAG,"HaLow DTIM10 AP ready on US 914.5 MHz/1 MHz mac=%02x:%02x:%02x:%02x:%02x:%02x",info.mac_addr[0],info.mac_addr[1],info.mac_addr[2],info.mac_addr[3],info.mac_addr[4],info.mac_addr[5]);
+    return true;
 }
 static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t total,const uint8_t *dest) {
     uint8_t args[4]={state.width,state.width>>8,state.height,state.height>>8};
@@ -152,7 +161,7 @@ static void fail(const char *message) {
 }
 static bool start_action(enum action action,uint16_t width,uint16_t height) {
     take();
-    if(state.busy || state.readers || atomic_load(&capture_requested)) { give();return false; }
+    if(!atomic_load(&radio_ready) || state.busy || state.readers || atomic_load(&capture_requested)) { give();return false; }
     requested_action=action;requested_width=width;requested_height=height;
     atomic_store(&capture_requested,true);
     give();return true;
@@ -250,7 +259,16 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
 }
 static void worker(void *arg) {
     (void)arg;int previous_button=1;int64_t button_at=0;
+    if(!halow_start()) atomic_store(&radio_failed,true);
+    else if(!atomic_load(&radio_failed)) atomic_store(&radio_ready,true);
     for(;;) {
+        if(atomic_load(&radio_failed)) {
+            atomic_store(&radio_ready,false);atomic_store(&pending,false);
+            take();state.peer=false;state.busy=false;state.phase=FAILED;
+            snprintf(state.error,sizeof(state.error),"Remote link unavailable. Restart the gateway to retry.");
+            atomic_store(&capture_requested,false);give();
+            vTaskDelete(NULL);return;
+        }
         int64_t now=esp_timer_get_time();
         uint8_t command;
         if(uart_read_bytes(UART_NUM_0,&command,1,0)==1) {
@@ -310,6 +328,7 @@ static esp_err_t status_get(httpd_req_t *req) {
     cJSON_AddStringToObject(json,"state",phases[state.phase]);
     cJSON_AddBoolToObject(json,"busy",state.busy || atomic_load(&capture_requested));
     cJSON_AddBoolToObject(json,"peer",state.peer);
+    cJSON_AddStringToObject(json,"radio",atomic_load(&radio_failed)?"unavailable":atomic_load(&radio_ready)?"ready":"starting");
     cJSON_AddNumberToObject(json,"id",state.id);cJSON_AddNumberToObject(json,"total",state.total);
     cJSON_AddNumberToObject(json,"received",state.received);cJSON_AddNumberToObject(json,"retries",state.retries);
     cJSON_AddStringToObject(json,"error",state.error);cJSON_AddStringToObject(json,"version",state.version);
@@ -346,6 +365,12 @@ static esp_err_t action_post(httpd_req_t *req) {
         if(valid) {width=w->valueint;height=h->valueint;valid=cam_resolution_find(width,height)!=NULL;}
         cJSON_Delete(json);
         if(!valid) {httpd_resp_set_status(req,"400 Bad Request");return httpd_resp_sendstr(req,"{\"error\":\"Choose a supported camera resolution.\"}");}
+    }
+    if(!atomic_load(&radio_ready)) {
+        httpd_resp_set_status(req,"503 Service Unavailable");
+        return httpd_resp_sendstr(req,atomic_load(&radio_failed)?
+            "{\"error\":\"Remote link unavailable. The gateway page is still available.\"}":
+            "{\"error\":\"Remote link is starting. Try again shortly.\"}");
     }
     if(!start_action(action,width,height)) {httpd_resp_set_status(req,"409 Conflict");return httpd_resp_sendstr(req,"{\"error\":\"A remote action or download is already in progress.\"}");}
     httpd_resp_set_status(req,"202 Accepted");return httpd_resp_sendstr(req,"{\"accepted\":true}");
@@ -395,10 +420,10 @@ void app_main(void) {
     lock=xSemaphoreCreateMutex();rx_queue=xQueueCreate(12,sizeof(struct cam_event));
     if(!lock || !rx_queue) abort();
     state.id=esp_random()|1U;
-    halow_start();
+    /* Serve the local page before any radio initialization or peer discovery. */
+    wifi_web_start();
     const gpio_config_t button={.pin_bit_mask=1ULL<<0,.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};
     ESP_ERROR_CHECK(gpio_config(&button));
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0,256,0,0,NULL,0));
     if(xTaskCreate(worker,"camera_radio",16384,NULL,5,NULL)!=pdPASS) abort();
-    wifi_web_start();
 }
