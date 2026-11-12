@@ -2,18 +2,20 @@
 
 A standalone PlatformIO project for a Heltec HT-HC33 camera gateway and an
 EdgeZ nRF54L15 + FGH200M/MM8108 remote node with a Putal/VC0706 UART camera.
-**Current test mode:** `CONFIG_CAMERA_DUMMY_IMAGE=y` makes **Take photo** send a
-known JPEG labelled **TEST IMAGE / NO CAMERA**, with camera power kept off.
-It exercises the same DTIM wake, block transfer, retries, whole-image reference
-CRC, HTTP download and browser display as a real capture. All dropdown sizes
-have checked-in fixtures. Set this option to `n` and rebuild/reflash nRF to
-resume real camera capture. **Get camera version** remains an explicit hardware
-query and may power the camera.
+**Camera mode:** `CONFIG_CAMERA_DUMMY_IMAGE=n` reads the VC0706 frozen JPEG
+through a background producer and an eight-slot, 256-byte block ring. The
+producer pauses when the ring is full; the radio consumer retains its last
+block for retries. UART DMA reception still uses a separate 2 KiB byte ring.
+This bounds RAM usage while allowing UART reads and radio TX to overlap.
+
+Set `CONFIG_CAMERA_DUMMY_IMAGE=y` and rebuild/reflash nRF to repeat the validated
+camera-free test: **Take photo** sends a known JPEG labelled **TEST IMAGE /
+NO CAMERA**, with camera power off. All dropdown sizes have checked-in fixtures.
+**Get camera version** always remains an explicit hardware query.
 
 Connect a phone or laptop to HC33's Wi-Fi, open its page, and click **Take photo**.
 The nRF wakes and returns a JPEG in checked, retryable blocks. In real-camera
-mode it powers the camera and captures first; the current test mode reads a
-known fixture from flash. The page displays the completed image and offers a download.
+mode it powers the camera and captures first; dummy mode reads a known fixture from flash. The page displays the completed image and offers a download.
 HC33's USER button (GPIO0, active low) and the page's **Wake LED** button
 send the same LED-only command: the nRF LED lights for five seconds, without
 powering the camera. **Take photo** sends the selected resolution to the nRF.

@@ -236,6 +236,7 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         int rc=0;
         if(dummy_image) memcpy(block,dummy_image->data+p->offset,n);
         else rc=vc0706_read(p->offset,block,n);
+        if(rc==-EALREADY) return; /* delayed READ; newer response is already in flight */
         if(rc) { LOG_ERR("Camera read offset=%u failed=%d",p->offset,rc); error(session,CAM_ERR_CAMERA,peer); return; }
         bool sent=send_packet(CAM_DATA,session,p->offset,total,block,n,peer);
         if(!p->offset || p->offset+n==total) LOG_INF("Camera block DATA offset=%u size=%u sent=%u",p->offset,n,sent);
