@@ -33,7 +33,8 @@ K_SEM_DEFINE(rx_disabled,0,1);
  * camera READ commands; a full queue applies backpressure to the frozen frame.
  * The consumer retains its last block independently for radio retransmission. */
 struct jpeg_block { uint32_t offset; uint16_t length; uint8_t bytes[CAM_BLOCK_SIZE]; };
-K_MSGQ_DEFINE(jpeg_blocks,sizeof(struct jpeg_block),8,4);
+#define JPEG_RING_SLOTS (CONFIG_CAMERA_JPEG_RING_KB * 1024U / CAM_BLOCK_SIZE)
+K_MSGQ_DEFINE(jpeg_blocks,sizeof(struct jpeg_block),JPEG_RING_SLOTS,4);
 K_SEM_DEFINE(stream_start,0,1);
 K_SEM_DEFINE(stream_idle,0,1);
 static atomic_t stream_active,stream_cancel,stream_error,stream_done;
@@ -88,7 +89,8 @@ static void start_stream(uint32_t length) {
     stream_length=length;stream_delivered=stream_produced=stream_replays=0;replay.length=0;
     atomic_clear(&stream_cancel);atomic_clear(&stream_error);atomic_clear(&stream_done);
     atomic_set(&stream_active,1);k_sem_give(&stream_start);
-    LOG_INF("Camera JPEG ring started slots=8 block=%u total=%u",CAM_BLOCK_SIZE,length);
+    LOG_INF("Camera JPEG ring started payload=%u KiB slots=%u block=%u total=%u",
+        CONFIG_CAMERA_JPEG_RING_KB,JPEG_RING_SLOTS,CAM_BLOCK_SIZE,length);
 }
 static void receive(const struct device *dev,struct uart_event *event,void *arg) {
     ARG_UNUSED(arg);

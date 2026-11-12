@@ -23,3 +23,12 @@ config OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS
 config CAMERA_DUMMY_IMAGE
     bool "Send deterministic JPEG test blocks instead of capturing a camera image"
     default n
+
+config CAMERA_JPEG_RING_KB
+    int "JPEG block ring payload capacity in KiB"
+    range 2 32
+    default 32
+    help
+      Bounded queue between the camera UART producer and radio block consumer.
+      Use 16 or 32 KiB for larger captures. Metadata and the retry cache use
+      additional RAM; UART DMA uses a separate byte ring.

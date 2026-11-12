@@ -3,10 +3,12 @@
 A standalone PlatformIO project for a Heltec HT-HC33 camera gateway and an
 EdgeZ nRF54L15 + FGH200M/MM8108 remote node with a Putal/VC0706 UART camera.
 **Camera mode:** `CONFIG_CAMERA_DUMMY_IMAGE=n` reads the VC0706 frozen JPEG
-through a background producer and an eight-slot, 256-byte block ring. The
+through a background producer and a 32 KiB ring (128 blocks of 256 bytes). The
 producer pauses when the ring is full; the radio consumer retains its last
 block for retries. UART DMA reception still uses a separate 2 KiB byte ring.
 This bounds RAM usage while allowing UART reads and radio TX to overlap.
+Set `CONFIG_CAMERA_JPEG_RING_KB=16` for a 16 KiB ring; the default is 32. Queue
+metadata, DMA buffers, and the retry cache use additional RAM.
 
 Set `CONFIG_CAMERA_DUMMY_IMAGE=y` and rebuild/reflash nRF to repeat the validated
 camera-free test: **Take photo** sends a known JPEG labelled **TEST IMAGE /
