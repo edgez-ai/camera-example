@@ -23,6 +23,9 @@ page is available even when the nRF node or camera is disconnected. It shows
 remote-link startup/failure separately from node discovery; discovery does not
 claim that a physical camera is attached. Camera commands report failures on
 the page without taking down the local Wi-Fi or HTTP server.
+This was manually verified on 2026-11-12: the HC33 page opened with no camera
+connected. Boot logs also showed HTTP ready before HaLow initialization
+completed, with no remote peer discovered.
 
 HC33's USER button (GPIO0, active low) and the page's **Wake LED** button
 send the same LED-only command: the nRF LED lights for five seconds, without
