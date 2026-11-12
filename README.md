@@ -2,9 +2,18 @@
 
 A standalone PlatformIO project for a Heltec HT-HC33 camera gateway and an
 EdgeZ nRF54L15 + FGH200M/MM8108 remote node with a Putal/VC0706 UART camera.
+**Current test mode:** `CONFIG_CAMERA_DUMMY_IMAGE=y` makes **Take photo** send a
+known JPEG labelled **TEST IMAGE / NO CAMERA**, with camera power kept off.
+It exercises the same DTIM wake, block transfer, retries, whole-image reference
+CRC, HTTP download and browser display as a real capture. All dropdown sizes
+have checked-in fixtures. Set this option to `n` and rebuild/reflash nRF to
+resume real camera capture. **Get camera version** remains an explicit hardware
+query and may power the camera.
+
 Connect a phone or laptop to HC33's Wi-Fi, open its page, and click **Take photo**.
-The nRF wakes, powers the camera, captures a JPEG, and returns it in checked,
-retryable blocks. The page displays the completed image and offers a download.
+The nRF wakes and returns a JPEG in checked, retryable blocks. In real-camera
+mode it powers the camera and captures first; the current test mode reads a
+known fixture from flash. The page displays the completed image and offers a download.
 HC33's USER button (GPIO0, active low) and the page's **Wake LED** button
 send the same LED-only command: the nRF LED lights for five seconds, without
 powering the camera. **Take photo** sends the selected resolution to the nRF.
@@ -160,6 +169,12 @@ pio run -e hc33
 pio run -e nrf54-camera
 ```
 
+The host test also streams all nine deterministic JPEG fixtures through the
+actual codec/assembler and checks their known CRCs and dimensions. Regenerate
+them only when needed with `pip install Pillow` and
+`python3 scripts/generate_dummy_images.py`; normal firmware builds have no
+Pillow dependency.
+
 The host test runs the **same C codec and image assembler used by the HC33**
 with address/undefined-behavior sanitizers. It checks every single-bit packet
 corruption, truncated messages, buffer limits, wrong sessions, out-of-order and
@@ -167,8 +182,15 @@ duplicate delivery, JPEG markers and dimensions, capture arguments, and thirteen
 transfer sizes up to 512 KiB.
 Both the physical USER and web Wake LED actions were manually verified on
 2026-11-11. Native DTIM10 setup and five-second LED on/off cycles were also
-recorded in device logs. Camera communication uses the later working DMA
-receiver. This camera returns status 1 on its resolution-write ACK, matching
+recorded in device logs. On 2026-11-12 the version-only command returned
+`PTC3M1 1.2` (raw hex `505443334d3120312e32`). A real 640x480 capture transferred
+9,603 bytes in 256-byte blocks with zero retries, passed JPEG dimension checks,
+and completed the finish exchange (CRC32 `c97a3012`). This verified the radio
+transport; the browser still reported an error, which is being isolated using
+the dummy-image test. The nRF then logged camera
+power-off and restoration of DTIM10/13 ms. Larger 768-byte replies did not
+complete reception in this setup; they are not a validated mode for this
+example. Camera communication uses the later working DMA receiver. This camera returns status 1 on its resolution-write ACK, matching
 the older driver's accepted framing; the receiver therefore requires the
 actual JPEG dimensions to match the selected mode.
 

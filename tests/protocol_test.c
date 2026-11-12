@@ -1,5 +1,6 @@
 /* Copyright 2026 EdgeZeron AI AB. See LICENSE. */
 #include "camera_protocol.h"
+#include "camera_dummy.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,8 +91,35 @@ static void jpeg_dimensions(void) {
     damaged[4]=0;damaged[15]=0;damaged[16]=0;
     assert(!cam_jpeg_dimensions(damaged,sizeof(damaged),&w,&h));
 }
+static void dummy_images(void) {
+    const uint16_t modes[][2]={{160,120},{320,240},{640,480},{1024,768},{1280,720},
+        {1280,960},{1600,1200},{1920,1080},{2304,1296}};
+    for(unsigned i=0;i<sizeof(modes)/sizeof(modes[0]);i++) {
+        const struct cam_dummy_image *fixture=cam_dummy_find(modes[i][0],modes[i][1]);
+        assert(fixture && fixture->length<=CAM_MAX_JPEG);
+        uint16_t width,height;
+        assert(cam_jpeg_dimensions(fixture->data,fixture->length,&width,&height));
+        assert(width==modes[i][0] && height==modes[i][1]);
+        assert(cam_crc32(fixture->data,fixture->length)==fixture->crc32);
+        uint8_t *out=malloc(fixture->length);assert(out);
+        struct cam_image image;assert(cam_image_start(&image,out,fixture->length,42,fixture->length));
+        for(uint32_t offset=0;offset<fixture->length;) {
+            uint16_t count=fixture->length-offset>CAM_BLOCK_SIZE?CAM_BLOCK_SIZE:fixture->length-offset;
+            struct cam_packet p={.type=CAM_DATA,.session=42,.offset=offset,.total=fixture->length,
+                .size=count,.data=fixture->data+offset},decoded;
+            uint8_t wire[CAM_PACKET_MAX];size_t n=cam_encode(wire,sizeof(wire),&p);
+            assert(cam_decode(wire,n,&decoded));
+            assert(cam_image_accept(&image,&decoded)==(offset+count==fixture->length?CAM_IMAGE_COMPLETE:CAM_IMAGE_PROGRESS));
+            assert(cam_image_accept(&image,&decoded)==CAM_IMAGE_IGNORED);
+            offset+=count;
+        }
+        assert(cam_crc32(out,fixture->length)==fixture->crc32);
+        assert(!memcmp(out,fixture->data,fixture->length));free(out);
+    }
+    assert(!cam_dummy_find(1,1));
+}
 int main(void) {
-    codec();bounds_and_bad_jpeg();capture_arguments();jpeg_dimensions();
+    codec();bounds_and_bad_jpeg();capture_arguments();jpeg_dimensions();dummy_images();
     const uint32_t sizes[]={4,255,256,257,511,512,513,767,768,769,32768,65536,CAM_MAX_JPEG};
     for(unsigned i=0;i<sizeof(sizes)/sizeof(sizes[0]);i++) transfer(sizes[i]);
     puts("PASS: camera arguments/JPEG dimensions, CRC/codec corruption, truncation, bounds, stale/duplicate blocks, invalid JPEG, 13 image sizes through 512 KiB");

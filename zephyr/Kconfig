@@ -19,3 +19,7 @@ config OFFGRID_NRF54_SENSOR_SPI_IRQ_SLEEP_NOPULL
 config OFFGRID_NRF54_SENSOR_SPI_SLEEP_PINS
     bool
     default y
+
+config CAMERA_DUMMY_IMAGE
+    bool "Send deterministic JPEG test blocks instead of capturing a camera image"
+    default n

@@ -46,6 +46,8 @@ static const char *const phases[]={"idle","queued","discovering","capturing","re
 static struct {
     enum phase phase;
     uint32_t id,total,received,retries;
+    uint32_t image_id,image_length,image_crc,expected_crc;
+    bool image_ready,image_test,test_image;
     uint8_t *image;
     unsigned readers;
     bool busy,peer;
@@ -159,7 +161,11 @@ static bool start_action(enum action action,uint16_t width,uint16_t height) {
 static void begin_capture(void) {
     take();
     if(state.busy || state.readers) { give();return; }
-    free(state.image);state.image=NULL;
+    if(requested_action==ACTION_CAPTURE) {
+        free(state.image);state.image=NULL;state.image_ready=false;
+        state.image_id=state.image_length=state.image_crc=state.expected_crc=0;
+        state.test_image=false;
+    }
     state.id++;if(!state.id)state.id=1;
     state.total=state.received=state.retries=0;state.error[0]=0;
     state.busy=true;state.phase=QUEUED;state.action=requested_action;
@@ -209,7 +215,11 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(!image) image=heap_caps_malloc(p->total,MALLOC_CAP_8BIT);
         if(!image) { fail("HC33 has insufficient RAM for this JPEG.");return; }
         if(!cam_image_start(&assembly,image,p->total,state.id,p->total)) { free(image);fail("Invalid image transfer metadata.");return; }
-        take();state.total=p->total;state.image=image;give();phase(RECEIVING);
+        take();state.total=p->total;state.image=image;
+        state.test_image=p->size==5 && p->data[0]==1;
+        if(state.test_image) state.expected_crc=(uint32_t)p->data[1] | (uint32_t)p->data[2]<<8 |
+            (uint32_t)p->data[3]<<16 | (uint32_t)p->data[4]<<24;
+        give();phase(RECEIVING);
         ESP_LOGI(TAG,"Capture id=%"PRIu32" JPEG=%"PRIu32" bytes",state.id,state.total);
     } else if(state.phase==RECEIVING && p->type==CAM_DATA) {
         enum cam_image_result result=cam_image_accept(&assembly,p);
@@ -223,11 +233,18 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
                actual_width!=state.width || actual_height!=state.height) {
                 fail("Camera JPEG dimensions do not match the requested resolution.");return;
             }
-            ESP_LOGI(TAG,"JPEG resolution verified %ux%u",actual_width,actual_height);
+            uint32_t crc=cam_crc32(state.image,state.total);
+            if(state.test_image && crc!=state.expected_crc) {
+                fail("Test image checksum does not match the known fixture.");return;
+            }
+            take();state.image_crc=crc;give();
+            ESP_LOGI(TAG,"JPEG resolution verified %ux%u test=%u crc32=%08"PRIx32,actual_width,actual_height,state.test_image,crc);
             phase(FINISHING);
         }
     } else if(state.phase==FINISHING && p->type==CAM_FINISHED) {
-        take();state.phase=COMPLETE;state.busy=false;give();atomic_store(&pending,false);
+        take();state.phase=COMPLETE;state.busy=false;
+        state.image_id=state.id;state.image_length=state.total;state.image_ready=true;
+        state.image_test=state.test_image;give();atomic_store(&pending,false);
         ESP_LOGI(TAG,"Photo id=%"PRIu32" ready bytes=%"PRIu32" retries=%"PRIu32" crc32=%08"PRIx32,state.id,state.total,state.retries,cam_crc32(state.image,state.total));
     }
 }
@@ -271,7 +288,7 @@ static void worker(void *arg) {
                     last_send=now;
                 }
             } else if((state.phase==RECEIVING || state.phase==FINISHING) && (!last_send || now-last_send>350000)) {
-                if(attempts>=12) fail("Block delivery timed out. Move closer and retry.");
+                if(attempts>=12) fail("Block response timed out; transfer stopped.");
                 else {
                     if(attempts) { take();state.retries++;give(); }
                     attempts++;last_send=now;
@@ -298,6 +315,12 @@ static esp_err_t status_get(httpd_req_t *req) {
     cJSON_AddStringToObject(json,"error",state.error);cJSON_AddStringToObject(json,"version",state.version);
     cJSON_AddStringToObject(json,"version_hex",state.version_hex);
     cJSON_AddNumberToObject(json,"width",state.width);cJSON_AddNumberToObject(json,"height",state.height);
+    cJSON_AddBoolToObject(json,"image_ready",state.image_ready);
+    cJSON_AddBoolToObject(json,"test_image",state.image_ready?state.image_test:state.test_image);
+    cJSON_AddNumberToObject(json,"image_id",state.image_id);
+    cJSON_AddNumberToObject(json,"image_bytes",state.image_length);
+    cJSON_AddNumberToObject(json,"image_crc32",state.image_crc);
+    cJSON_AddNumberToObject(json,"expected_crc32",state.expected_crc);
     cJSON_AddNumberToObject(json,"dropped_rx",atomic_load(&dropped_rx));give();
     char *text=cJSON_PrintUnformatted(json);cJSON_Delete(json);
     if(!text) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
@@ -334,11 +357,14 @@ static esp_err_t photo_get(httpd_req_t *req) {
     char *end;unsigned long wanted=strtoul(id,&end,10);
     if(!id[0] || *end || wanted>UINT32_MAX) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid image id");
     take();
-    if(state.phase!=COMPLETE || atomic_load(&capture_requested) || state.id!=wanted || !state.image) { give();return httpd_resp_send_err(req,HTTPD_404_NOT_FOUND,"Photo is not available"); }
-    state.readers++;uint8_t *image=state.image;uint32_t length=state.total;give();
+    if(!state.image_ready || (atomic_load(&capture_requested) && requested_action==ACTION_CAPTURE) || state.image_id!=wanted || !state.image) {
+        ESP_LOGW(TAG,"HTTP photo unavailable requested=%lu stored=%"PRIu32" ready=%u state=%s",wanted,state.image_id,state.image_ready,phases[state.phase]);
+        give();return httpd_resp_send_err(req,HTTPD_404_NOT_FOUND,"Photo is not available");
+    }
+    state.readers++;uint8_t *image=state.image;uint32_t length=state.image_length;give();
     httpd_resp_set_type(req,"image/jpeg");httpd_resp_set_hdr(req,"Cache-Control","no-store");
     esp_err_t rc=httpd_resp_send(req,(const char *)image,length);
-    take();state.readers--;give();return rc;
+    take();state.readers--;give();ESP_LOGI(TAG,"HTTP photo id=%lu bytes=%"PRIu32" result=%s",wanted,length,esp_err_to_name(rc));return rc;
 }
 static void wifi_web_start(void) {
     esp_err_t rc=nvs_flash_init();

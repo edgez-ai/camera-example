@@ -9,5 +9,6 @@ with tempfile.TemporaryDirectory(prefix="camera-protocol-") as directory:
     binary=Path(directory)/"protocol-test"
     subprocess.run([os.environ.get("CC","cc"),"-std=c11","-Wall","-Wextra","-Werror",
         "-fsanitize=address,undefined","-g","-I",str(root/"common"),
-        str(root/"tests/protocol_test.c"),str(root/"common/camera_protocol.c"),"-o",str(binary)],check=True)
+        str(root/"tests/protocol_test.c"),str(root/"common/camera_protocol.c"),
+        str(root/"nrf54/src/camera_dummy_images.c"),"-o",str(binary)],check=True)
     subprocess.run([str(binary)],check=True)

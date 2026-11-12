@@ -1,6 +1,7 @@
 /* Copyright 2026 EdgeZeron AI AB. See LICENSE. */
 #include "camera_radio.h"
 #include "vc0706.h"
+#include "camera_dummy.h"
 #include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -24,6 +25,7 @@ K_SEM_DEFINE(tx_done,0,1);
 static atomic_t tx_armed,tx_failed;
 static uintptr_t tx_expected;
 static uint32_t session,total,boot_nonce,last_error;
+static const struct cam_dummy_image *dummy_image;
 static int64_t last_activity,led_until;
 static uint32_t led_session,version_session;
 static uint8_t version_data[CAM_VERSION_MAX];
@@ -128,6 +130,14 @@ static bool send_packet(uint8_t type,uint32_t id,uint32_t offset,uint32_t length
 static void error(uint32_t id,uint32_t code,const uint8_t *dest) {
     (void)send_packet(CAM_ERROR,id,code,0,NULL,0,dest);
 }
+static bool send_captured(void) {
+    uint8_t metadata[5]={1,0,0,0,0};
+    if(dummy_image) {
+        for(unsigned i=0;i<4;i++) metadata[1+i]=(uint8_t)(dummy_image->crc32>>(8*i));
+        return send_packet(CAM_CAPTURED,session,0,total,metadata,sizeof(metadata),peer);
+    }
+    return send_packet(CAM_CAPTURED,session,0,total,NULL,0,peer);
+}
 static bool camera_radio_awake(void) {
     if(!ps_ready || transaction_awake) return true;
     struct morse_cmd_req_config_ps ps=MORSE_COMMAND_INIT(ps,MORSE_CMD_ID_CONFIG_PS,radio.vif_id,
@@ -189,7 +199,7 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         led_until=0;
         if(p->session==session) {
             if(last_error) error(session,last_error,peer);
-            else if(image_open) (void)send_packet(CAM_CAPTURED,session,0,total,NULL,0,peer);
+            else if(image_open) (void)send_captured();
             else error(session,CAM_ERR_SESSION,peer);
             if(!image_open) { k_msleep(30);sleep_idle(); }
             return;
@@ -202,26 +212,36 @@ static void handle(const struct cam_event *event,const struct cam_packet *p) {
         if(!camera_radio_awake()) {error(p->session,CAM_ERR_RADIO,peer);sleep_idle();return;}
         session=p->session; last_error=0; total=0;
         gpio_pin_set_dt(&led,1);
-        int rc=vc0706_capture(width,height,&total);
+        int rc=0;dummy_image=NULL;
+        if(IS_ENABLED(CONFIG_CAMERA_DUMMY_IMAGE)) {
+            vc0706_off();dummy_image=cam_dummy_find(width,height);
+            if(!dummy_image) rc=-EINVAL;
+            else {
+                total=dummy_image->length;
+                LOG_INF("DUMMY_CAPTURE %ux%u bytes=%u crc32=%08x camera_power=off",width,height,total,dummy_image->crc32);
+            }
+        } else rc=vc0706_capture(width,height,&total);
         if(rc) {
             LOG_ERR("Camera capture failed: %d",rc);
             last_error=CAM_ERR_CAMERA; error(session,last_error,peer); sleep_idle();
         } else {
             image_open=true;
             LOG_INF("Captured session=%u JPEG=%u bytes",session,total);
-            (void)send_packet(CAM_CAPTURED,session,0,total,NULL,0,peer);
+            (void)send_captured();
         }
     } else if(p->type==CAM_READ && p->session==session && image_open) {
         uint16_t n=(uint16_t)MIN(CAM_BLOCK_SIZE,total>p->offset ? total-p->offset : 0);
         if(p->total!=total || !cam_valid_block(total,p->offset,n)) { error(session,CAM_ERR_RANGE,peer); return; }
         if(!p->offset) LOG_INF("Camera block READ offset=0 size=%u",n);
-        int rc=vc0706_read(p->offset,block,n);
+        int rc=0;
+        if(dummy_image) memcpy(block,dummy_image->data+p->offset,n);
+        else rc=vc0706_read(p->offset,block,n);
         if(rc) { LOG_ERR("Camera read offset=%u failed=%d",p->offset,rc); error(session,CAM_ERR_CAMERA,peer); return; }
         bool sent=send_packet(CAM_DATA,session,p->offset,total,block,n,peer);
         if(!p->offset || p->offset+n==total) LOG_INF("Camera block DATA offset=%u size=%u sent=%u",p->offset,n,sent);
     } else if(p->type==CAM_FINISH && p->session==session) {
         (void)send_packet(CAM_FINISHED,session,0,total,NULL,0,peer);
-        image_open=false;
+        image_open=false;dummy_image=NULL;
         k_msleep(30); sleep_idle();
         LOG_INF("Session=%u finished; camera off",session);
     } else if(p->type==CAM_READ) error(p->session,CAM_ERR_SESSION,peer);

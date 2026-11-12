@@ -1,0 +1,65 @@
+[
+  {
+    "width": 160,
+    "height": 120,
+    "bytes": 2208,
+    "crc32": "cc08b887",
+    "sha256": "5d9b7b2e88a5f3dcb6336d1f4a09423817c84f57f5cd5bd586aa472af11c93d3"
+  },
+  {
+    "width": 320,
+    "height": 240,
+    "bytes": 3109,
+    "crc32": "8bb52e85",
+    "sha256": "8e25718d1240b51045d6656a4b0f99cd5d9ce4bbe289ab6804a5609df30e821d"
+  },
+  {
+    "width": 640,
+    "height": 480,
+    "bytes": 7910,
+    "crc32": "75ff25b4",
+    "sha256": "e2bd9e1a48012fd99534b27cc6983f94f4b2583da8f71ed9c1061ac098ece044"
+  },
+  {
+    "width": 1024,
+    "height": 768,
+    "bytes": 15064,
+    "crc32": "270e5571",
+    "sha256": "57ebf50a49eecf9071b7c82166d2a9e9631e0aa508ad7efea40c1212e20384d8"
+  },
+  {
+    "width": 1280,
+    "height": 720,
+    "bytes": 18029,
+    "crc32": "8b65555d",
+    "sha256": "d107f32c65eda4775f707a17fbb8b374cce9654934dec39e47bb691786f4350f"
+  },
+  {
+    "width": 1280,
+    "height": 960,
+    "bytes": 21002,
+    "crc32": "3a68f08a",
+    "sha256": "64e6c21ecd5f7c91d53f8797dc27ca4cda2d51da25eda439dde13d67c6e0c981"
+  },
+  {
+    "width": 1600,
+    "height": 1200,
+    "bytes": 28509,
+    "crc32": "97802dc6",
+    "sha256": "04eaee3cd1266628831da5d6dd5ea3814e90480b7a4859104208e920b6398895"
+  },
+  {
+    "width": 1920,
+    "height": 1080,
+    "bytes": 29873,
+    "crc32": "ec78e3b1",
+    "sha256": "915ed2652800f87700fa4376eb78f6c172a63c162378e97e82dccca6390fee22"
+  },
+  {
+    "width": 2304,
+    "height": 1296,
+    "bytes": 38888,
+    "crc32": "ade38980",
+    "sha256": "ec301ce9e2abb94c2f16765681e863673298c4559cce3e15720888add2a3b756"
+  }
+]
