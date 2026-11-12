@@ -198,7 +198,14 @@ example. The dummy mode was then flashed on both boards: three consecutive
 640x480 transfers completed with zero retries, 7,910 bytes each, and matching
 reference CRC32 `75ff25b4`. Each restored DTIM10/13 ms afterward while camera
 power stayed off. The TEST IMAGE / NO CAMERA picture was also confirmed on
-the HC33 web page. Real camera capture remains a separate investigation.
+the HC33 web page. The subsequent real-camera ring test completed three
+consecutive 640x480
+captures with a 32 KiB ring: 26,646 / 26,922 / 26,840 bytes, all with zero
+retries, zero UART overruns, and matching requested JPEG dimensions. Produced
+and delivered byte counts matched on every image, and camera power-off plus
+DTIM10/13 ms restoration were logged afterward. The 32 KiB image uses 189,261
+bytes of static RAM in the PlatformIO size report (72.2% of 256 KiB). The actual
+camera scene was then manually confirmed on the HC33 web page.
 Camera communication uses the later working DMA receiver. This camera returns status 1 on its resolution-write ACK, matching
 the older driver's accepted framing; the receiver therefore requires the
 actual JPEG dimensions to match the selected mode.
